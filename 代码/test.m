@@ -31,7 +31,7 @@ W_hamming_centered_ref = W_hamming_centered_ref / (max(W_hamming_centered_ref) +
 W_hamming_ref = ifftshift(W_hamming_centered_ref);
 s_hamming_ref = ifft(fft(s_LFM) .* W_hamming_ref);
 [R_hamming_ref, lag_hamming_ref] = xcorr(s_hamming_ref);
-R_hamming_ref = abs(R_hamming_ref); R_hamming_ref = R_hamming_ref / max(R_hamming_ref);
+R_hamming_ref = safe_normalize(abs(R_hamming_ref));
 [PSLR_hamming_ref, MW_hamming_ref, PAPR_hamming_ref] = compute_metrics_single(R_hamming_ref, lag_hamming_ref, s_hamming_ref);
 fprintf('参考 Hamming：PSLR = %.2f dB, MW = %.2e, PAPR = %.2f\n', PSLR_hamming_ref, MW_hamming_ref, PAPR_hamming_ref);
 
@@ -102,12 +102,12 @@ N = length(s_LFM);
 W_opt_temp = legendre_window(b_opt, fs, B, N);
 s_w_opt_temp = ifft(fft(s_LFM) .* W_opt_temp);
 [R_temp, lag_temp] = xcorr(s_w_opt_temp);
-R_temp = abs(R_temp); R_temp = R_temp / max(R_temp);
+R_temp = safe_normalize(abs(R_temp));
 [~, MW_opt, PAPR_opt] = compute_metrics_single(R_temp, lag_temp, s_w_opt_temp);
 
 % 计算参考信号（原始 LFM）的主瓣宽度和 PAPR
 [R_lfm_ref, lag_lfm_ref] = xcorr(s_LFM);
-R_lfm_ref = abs(R_lfm_ref); R_lfm_ref = R_lfm_ref / max(R_lfm_ref);
+R_lfm_ref = safe_normalize(abs(R_lfm_ref));
 [~, MW_lfm, PAPR_lfm] = compute_metrics_single(R_lfm_ref, lag_lfm_ref, s_LFM);
 
 % Hamming 参考因子（用于后续约束）
@@ -162,7 +162,7 @@ for attempt = 1:max_attempts
         attempt, max_attempts, MW_target_refined, PAPR_target_refined, PSLR_target_refined, used_margin);
 
     % 阶段A：仅 MW/PAPR 约束，先找可行点
-    nonlcon_stageA = @(b) compute_constraints_v2(b, s_LFM, fs, B, MW_target_refined, PAPR_target_refined, inf, MW_lfm, PAPR_lfm);
+    nonlcon_stageA = @(b) compute_constraints_v2(b, s_LFM, fs, B, MW_target_refined, PAPR_target_refined, 1e6, MW_lfm, PAPR_lfm);
     [b_feasible, ~, exitflag_A, output_A] = fmincon(obj_fun, b_opt, [], [], [], [], lb, ub, nonlcon_stageA, options);
     [cA_try, ~] = nonlcon_stageA(b_feasible);
 
@@ -255,11 +255,11 @@ s_hamming = ifft(fft(s_LFM_orig) .* W_hamming);
 
 % 计算脉冲压缩输出（自相关）
 [R_lfm, lag] = xcorr(s_LFM_orig);
-R_lfm = abs(R_lfm); R_lfm = R_lfm / max(R_lfm);
+R_lfm = safe_normalize(abs(R_lfm));
 [R_opt, ~] = xcorr(s_w_opt);
-R_opt = abs(R_opt); R_opt = R_opt / max(R_opt);
+R_opt = safe_normalize(abs(R_opt));
 [R_hamming, ~] = xcorr(s_hamming);
-R_hamming = abs(R_hamming); R_hamming = R_hamming / max(R_hamming);
+R_hamming = safe_normalize(abs(R_hamming));
 
 % 计算指标
 [PSLR_lfm, MW_lfm_final, PAPR_lfm_final] = compute_metrics_single(R_lfm, lag, s_LFM_orig);
@@ -352,6 +352,17 @@ function [W, f] = legendre_window(b, fs, B, N)
     % 转换到 FFT 顺序，便于直接与 fft(s) 相乘
     W = ifftshift(W_centered);
     W = W / (max(W) + eps);  % 幅度归一化，提升数值稳定性
+end
+
+
+function y = safe_normalize(x)
+    x = x(:);
+    m = max(abs(x));
+    if ~isfinite(m) || m <= eps
+        y = zeros(size(x));
+    else
+        y = x / m;
+    end
 end
 
 function P = legendreP(n, x)
@@ -458,12 +469,12 @@ function fitness = fitness_func(b, s_LFM, fs, B, lambda_MW, lambda_PAPR, lambda_
         W = legendre_window(b, fs, B, N);
         s_w = ifft(fft(s_LFM) .* W);
         [R, lag] = xcorr(s_w);
-        R = abs(R); R = R / max(R);
+        R = safe_normalize(abs(R));
         [PSLR, MW, PAPR] = compute_metrics_single(R, lag, s_w);
         ISLR = compute_ISLR(R, lag);
         
         [R_lfm, lag_lfm] = xcorr(s_LFM);
-        R_lfm = abs(R_lfm); R_lfm = R_lfm / max(R_lfm);
+        R_lfm = safe_normalize(abs(R_lfm));
         [~, MW_lfm, PAPR_lfm] = compute_metrics_single(R_lfm, lag_lfm, s_LFM);
         
         MW_factor = MW / MW_lfm;
@@ -490,22 +501,29 @@ function pslr = compute_PSLR(b, s_LFM, fs, B)
     W = legendre_window(b, fs, B, N);
     s_w = ifft(fft(s_LFM) .* W);
     [R, lag] = xcorr(s_w);
-    R = abs(R); R = R / max(R);
+    R = safe_normalize(abs(R));
     [pslr, ~, ~] = compute_metrics_single(R, lag, s_w);
 end
 
 function [c, ceq] = compute_constraints_v2(b, s_LFM, fs, B, MW_target, PAPR_target, PSLR_target, MW_lfm, PAPR_lfm)
 % 改进的约束函数：使用预先计算的参考指标
-    N = length(s_LFM);
-    W = legendre_window(b, fs, B, N);
-    s_w = ifft(fft(s_LFM) .* W);
-    [R, lag] = xcorr(s_w);
-    R = abs(R); R = R / max(R);
-    [PSLR, MW, PAPR] = compute_metrics_single(R, lag, s_w);
-    
-    MW_factor = MW / MW_lfm;
-    PAPR_factor = PAPR / PAPR_lfm;
-    
-    c = [MW_factor - MW_target; PAPR_factor - PAPR_target; PSLR - PSLR_target];
+    try
+        N = length(s_LFM);
+        W = legendre_window(b, fs, B, N);
+        s_w = ifft(fft(s_LFM) .* W);
+        [R, lag] = xcorr(s_w);
+        R = safe_normalize(abs(R));
+        [PSLR, MW, PAPR] = compute_metrics_single(R, lag, s_w);
+
+        MW_factor = MW / max(MW_lfm, eps);
+        PAPR_factor = PAPR / max(PAPR_lfm, eps);
+
+        c = [MW_factor - MW_target; PAPR_factor - PAPR_target; PSLR - PSLR_target];
+        if any(~isfinite(c))
+            c = [1e3; 1e3; 1e3];
+        end
+    catch
+        c = [1e3; 1e3; 1e3];
+    end
     ceq = [];
 end
