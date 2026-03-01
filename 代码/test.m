@@ -36,19 +36,20 @@ R_hamming_ref = abs(R_hamming_ref); R_hamming_ref = R_hamming_ref / max(R_hammin
 fprintf('参考 Hamming：PSLR = %.2f dB, MW = %.2e, PAPR = %.2f\n', PSLR_hamming_ref, MW_hamming_ref, PAPR_hamming_ref);
 
 %% 萤火虫算法参数
-dim = 5;            % 勒让德多项式系数个数（使用 0,2,4,6,8 偶数阶，保证偶对称）
+dim = 7;            % 勒让德多项式系数个数（使用 0,2,...,12 偶数阶，提升优化自由度）
 nFireflies = 30;    % 萤火虫数量
 maxIter = 100;      % 最大迭代次数
 gamma = 1;          % 光吸收系数
 beta0 = 1;          % 初始吸引度
 alpha = 0.2;        % 随机步长因子
-lambda_MW = 10;     % 主瓣宽度惩罚系数
-lambda_PAPR = 10;   % PAPR 惩罚系数
-lambda_PSLR = 30;   % 不超过 Hamming 的 PSLR 惩罚系数
+lambda_MW = 7;      % 主瓣宽度惩罚系数（适度放松，优先旁瓣抑制）
+lambda_PAPR = 8;    % PAPR 惩罚系数（适度放松，优先旁瓣抑制）
+lambda_PSLR = 80;   % 不超过 Hamming 的 PSLR 惩罚系数（增强约束）
 MW_target = 1.0;    % 目标主瓣宽度倍数（相对于 LFM 不加窗）
 PAPR_target = 1.0;  % 目标 PAPR 倍数（相对于 LFM 不加窗）
-PSLR_margin = 0.5;  % 目标至少比 Hamming 好 0.5 dB
+PSLR_margin = 1.5;  % 目标至少比 Hamming 好 1.5 dB
 PSLR_target = PSLR_hamming_ref - PSLR_margin;
+w_ISLR = 0.5;       % ISLR 权重，提升整体旁瓣能量抑制
 
 % 初始化萤火虫位置（系数 b_n，范围可调）
 lb = -5 * ones(1, dim);   % 下界
@@ -59,7 +60,7 @@ fireflies = lb + (ub - lb) .* rand(nFireflies, dim);
 fitness = zeros(nFireflies, 1);
 for i = 1:nFireflies
     fitness(i) = fitness_func(fireflies(i,:), s_LFM, fs, B, ...
-                              lambda_MW, lambda_PAPR, lambda_PSLR, MW_target, PAPR_target, PSLR_target);
+                              lambda_MW, lambda_PAPR, lambda_PSLR, MW_target, PAPR_target, PSLR_target, w_ISLR);
 end
 
 %% 萤火虫算法主循环
@@ -80,7 +81,7 @@ for iter = 1:maxIter
                 fireflies(i,:) = max(min(fireflies(i,:), ub), lb);
                 % 重新计算适应度
                 fitness(i) = fitness_func(fireflies(i,:), s_LFM, fs, B, ...
-                                          lambda_MW, lambda_PAPR, lambda_PSLR, MW_target, PAPR_target, PSLR_target);
+                                          lambda_MW, lambda_PAPR, lambda_PSLR, MW_target, PAPR_target, PSLR_target, w_ISLR);
             end
         end
     end
@@ -204,15 +205,19 @@ R_hamming = abs(R_hamming); R_hamming = R_hamming / max(R_hamming);
 [PSLR_opt, MW_opt_final, PAPR_opt_final] = compute_metrics_single(R_opt, lag, s_w_opt);
 [PSLR_hamming, MW_hamming_final, PAPR_hamming_final] = compute_metrics_single(R_hamming, lag, s_hamming);
 
+ISLR_lfm = compute_ISLR(R_lfm, lag);
+ISLR_hamming = compute_ISLR(R_hamming, lag);
+ISLR_opt = compute_ISLR(R_opt, lag);
+
 %% ========================================================================
 %  输出对比表格
 % =========================================================================
 
 fprintf('\n=================== 性能指标对比 ===================\n');
-fprintf('信号类型\t\tPSLR (dB,首零点)\t主瓣宽度(-3dB)\tPAPR\n');
-fprintf('原始 LFM\t\t%.2f\t\t%.2e\t\t%.2f\n', PSLR_lfm, MW_lfm_final, PAPR_lfm_final);
-fprintf('Hamming 加窗 LFM\t\t%.2f\t\t%.2e\t\t%.2f\n', PSLR_hamming, MW_hamming_final, PAPR_hamming_final);
-fprintf('优化 LFM（勒让德窗）\t%.2f\t\t%.2e\t\t%.2f\n', PSLR_opt, MW_opt_final, PAPR_opt_final);
+fprintf('信号类型\t\tPSLR (dB,首零点)\t主瓣宽度(-3dB)\tPAPR\tISLR(dB)\n');
+fprintf('原始 LFM\t\t%.2f\t\t%.2e\t\t%.2f\t%.2f\n', PSLR_lfm, MW_lfm_final, PAPR_lfm_final, ISLR_lfm);
+fprintf('Hamming 加窗 LFM\t\t%.2f\t\t%.2e\t\t%.2f\t%.2f\n', PSLR_hamming, MW_hamming_final, PAPR_hamming_final, ISLR_hamming);
+fprintf('优化 LFM（勒让德窗）\t%.2f\t\t%.2e\t\t%.2f\t%.2f\n', PSLR_opt, MW_opt_final, PAPR_opt_final, ISLR_opt);
 fprintf('========================================================\n');
 
 %% ========================================================================
@@ -378,7 +383,35 @@ function [PSLR, MW, PAPR] = compute_metrics_single(R, lag, s)
     PAPR = PAPR(1);
 end
 
-function fitness = fitness_func(b, s_LFM, fs, B, lambda_MW, lambda_PAPR, lambda_PSLR, MW_target, PAPR_target, PSLR_target)
+
+function islr = compute_ISLR(R, lag)
+    R = R(:);
+    lag = lag(:);
+    [~, idx_peak] = max(R);
+
+    left_null = idx_peak;
+    for i = idx_peak:-1:2
+        if R(i-1) > R(i) && R(i) < R(i+1)
+            left_null = i;
+            break;
+        end
+    end
+
+    right_null = idx_peak;
+    for i = idx_peak:length(R)-1
+        if R(i) > R(i+1) && R(i+1) < R(i+2)
+            right_null = i+1;
+            break;
+        end
+    end
+
+    main_energy = sum(R(left_null:right_null).^2) + eps;
+    side_energy = sum(R(1:left_null-1).^2) + sum(R(right_null+1:end).^2) + eps;
+    islr = 10*log10(side_energy / main_energy);
+    islr = islr(1);
+end
+
+function fitness = fitness_func(b, s_LFM, fs, B, lambda_MW, lambda_PAPR, lambda_PSLR, MW_target, PAPR_target, PSLR_target, w_ISLR)
     try
         N = length(s_LFM);
         W = legendre_window(b, fs, B, N);
@@ -386,6 +419,7 @@ function fitness = fitness_func(b, s_LFM, fs, B, lambda_MW, lambda_PAPR, lambda_
         [R, lag] = xcorr(s_w);
         R = abs(R); R = R / max(R);
         [PSLR, MW, PAPR] = compute_metrics_single(R, lag, s_w);
+        ISLR = compute_ISLR(R, lag);
         
         [R_lfm, lag_lfm] = xcorr(s_LFM);
         R_lfm = abs(R_lfm); R_lfm = R_lfm / max(R_lfm);
@@ -398,7 +432,7 @@ function fitness = fitness_func(b, s_LFM, fs, B, lambda_MW, lambda_PAPR, lambda_
         penalty_PAPR = lambda_PAPR * max(0, PAPR_factor - PAPR_target);
         penalty_PSLR = lambda_PSLR * max(0, PSLR - PSLR_target);
         
-        fitness = 1*PSLR + 1.5*penalty_MW + 1*penalty_PAPR + 1*penalty_PSLR;
+        fitness = 1*PSLR + w_ISLR*ISLR + 1.2*penalty_MW + 1*penalty_PAPR + 1.2*penalty_PSLR;
         
         if ~isscalar(fitness)
             fitness = fitness(1);
