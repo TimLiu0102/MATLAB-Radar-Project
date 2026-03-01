@@ -21,6 +21,20 @@ f = (-N/2:N/2-1)' * (fs/N); % 居中频率向量（与 fftshift 对齐）
 k = B / T;          % 调频斜率
 s_LFM = exp(1j * pi * k * t.^2);  % 复基带 LFM
 
+
+% 参考 Hamming 窗指标（作为 PSLR 目标基线）
+idx_band_ref = abs(f) <= B/2;
+N_band_ref = sum(idx_band_ref);
+W_hamming_centered_ref = zeros(N, 1);
+W_hamming_centered_ref(idx_band_ref) = hamming(N_band_ref);
+W_hamming_centered_ref = W_hamming_centered_ref / (max(W_hamming_centered_ref) + eps);
+W_hamming_ref = ifftshift(W_hamming_centered_ref);
+s_hamming_ref = ifft(fft(s_LFM) .* W_hamming_ref);
+[R_hamming_ref, lag_hamming_ref] = xcorr(s_hamming_ref);
+R_hamming_ref = abs(R_hamming_ref); R_hamming_ref = R_hamming_ref / max(R_hamming_ref);
+[PSLR_hamming_ref, MW_hamming_ref, PAPR_hamming_ref] = compute_metrics_single(R_hamming_ref, lag_hamming_ref, s_hamming_ref);
+fprintf('参考 Hamming：PSLR = %.2f dB, MW = %.2e, PAPR = %.2f\n', PSLR_hamming_ref, MW_hamming_ref, PAPR_hamming_ref);
+
 %% 萤火虫算法参数
 dim = 5;            % 勒让德多项式系数个数（使用 0,2,4,6,8 偶数阶，保证偶对称）
 nFireflies = 30;    % 萤火虫数量
@@ -30,8 +44,11 @@ beta0 = 1;          % 初始吸引度
 alpha = 0.2;        % 随机步长因子
 lambda_MW = 10;     % 主瓣宽度惩罚系数
 lambda_PAPR = 10;   % PAPR 惩罚系数
+lambda_PSLR = 30;   % 不超过 Hamming 的 PSLR 惩罚系数
 MW_target = 1.0;    % 目标主瓣宽度倍数（相对于 LFM 不加窗）
 PAPR_target = 1.0;  % 目标 PAPR 倍数（相对于 LFM 不加窗）
+PSLR_margin = 0.5;  % 目标至少比 Hamming 好 0.5 dB
+PSLR_target = PSLR_hamming_ref - PSLR_margin;
 
 % 初始化萤火虫位置（系数 b_n，范围可调）
 lb = -5 * ones(1, dim);   % 下界
@@ -42,7 +59,7 @@ fireflies = lb + (ub - lb) .* rand(nFireflies, dim);
 fitness = zeros(nFireflies, 1);
 for i = 1:nFireflies
     fitness(i) = fitness_func(fireflies(i,:), s_LFM, fs, B, ...
-                              lambda_MW, lambda_PAPR, MW_target, PAPR_target);
+                              lambda_MW, lambda_PAPR, lambda_PSLR, MW_target, PAPR_target, PSLR_target);
 end
 
 %% 萤火虫算法主循环
@@ -63,7 +80,7 @@ for iter = 1:maxIter
                 fireflies(i,:) = max(min(fireflies(i,:), ub), lb);
                 % 重新计算适应度
                 fitness(i) = fitness_func(fireflies(i,:), s_LFM, fs, B, ...
-                                          lambda_MW, lambda_PAPR, MW_target, PAPR_target);
+                                          lambda_MW, lambda_PAPR, lambda_PSLR, MW_target, PAPR_target, PSLR_target);
             end
         end
     end
@@ -104,13 +121,14 @@ disp('开始梯度精修...');
 relax_factor = 1.1;
 MW_target_refined = max(1.0, relax_factor * MW_factor_opt);   % 至少为 1.0
 PAPR_target_refined = max(1.0, relax_factor * PAPR_factor_opt);
-fprintf('精修约束目标：MW <= %.3f, PAPR <= %.3f\n', MW_target_refined, PAPR_target_refined);
+PSLR_target_refined = PSLR_hamming_ref - PSLR_margin;
+fprintf('精修约束目标：MW <= %.3f, PAPR <= %.3f, PSLR <= %.2f dB\n', MW_target_refined, PAPR_target_refined, PSLR_target_refined);
 
 % 目标函数：仅 PSLR（最小化）
 obj_fun = @(b) compute_PSLR(b, s_LFM, fs, B);
 
 % 非线性约束函数（传入参考指标）
-nonlcon = @(b) compute_constraints_v2(b, s_LFM, fs, B, MW_target_refined, PAPR_target_refined, MW_lfm, PAPR_lfm);
+nonlcon = @(b) compute_constraints_v2(b, s_LFM, fs, B, MW_target_refined, PAPR_target_refined, PSLR_target_refined, MW_lfm, PAPR_lfm);
 
 % fmincon 选项（使用 interior-point 算法，放宽容差）
 options = optimoptions('fmincon', 'Display', 'iter', 'Algorithm', 'interior-point', ...
@@ -132,7 +150,7 @@ fprintf('精修后 PSLR = %.2f dB\n', PSLR_after);
 
 % 检查约束满足情况（精修后）
 [c_after, ~] = nonlcon(b_refined);
-fprintf('精修后约束违反：MW_factor - target = %.3e, PAPR_factor - target = %.3e\n', c_after(1), c_after(2));
+fprintf('精修后约束违反：MW_factor - target = %.3e, PAPR_factor - target = %.3e, PSLR - target = %.3e\n', c_after(1), c_after(2), c_after(3));
 
 if exitflag > 0
     disp('梯度精修成功完成。');
@@ -360,7 +378,7 @@ function [PSLR, MW, PAPR] = compute_metrics_single(R, lag, s)
     PAPR = PAPR(1);
 end
 
-function fitness = fitness_func(b, s_LFM, fs, B, lambda_MW, lambda_PAPR, MW_target, PAPR_target)
+function fitness = fitness_func(b, s_LFM, fs, B, lambda_MW, lambda_PAPR, lambda_PSLR, MW_target, PAPR_target, PSLR_target)
     try
         N = length(s_LFM);
         W = legendre_window(b, fs, B, N);
@@ -378,8 +396,9 @@ function fitness = fitness_func(b, s_LFM, fs, B, lambda_MW, lambda_PAPR, MW_targ
         
         penalty_MW = lambda_MW * max(0, MW_factor - MW_target);
         penalty_PAPR = lambda_PAPR * max(0, PAPR_factor - PAPR_target);
+        penalty_PSLR = lambda_PSLR * max(0, PSLR - PSLR_target);
         
-        fitness = 1*PSLR + 1.5*penalty_MW + 1*penalty_PAPR;
+        fitness = 1*PSLR + 1.5*penalty_MW + 1*penalty_PAPR + 1*penalty_PSLR;
         
         if ~isscalar(fitness)
             fitness = fitness(1);
@@ -399,18 +418,18 @@ function pslr = compute_PSLR(b, s_LFM, fs, B)
     [pslr, ~, ~] = compute_metrics_single(R, lag, s_w);
 end
 
-function [c, ceq] = compute_constraints_v2(b, s_LFM, fs, B, MW_target, PAPR_target, MW_lfm, PAPR_lfm)
+function [c, ceq] = compute_constraints_v2(b, s_LFM, fs, B, MW_target, PAPR_target, PSLR_target, MW_lfm, PAPR_lfm)
 % 改进的约束函数：使用预先计算的参考指标
     N = length(s_LFM);
     W = legendre_window(b, fs, B, N);
     s_w = ifft(fft(s_LFM) .* W);
     [R, lag] = xcorr(s_w);
     R = abs(R); R = R / max(R);
-    [~, MW, PAPR] = compute_metrics_single(R, lag, s_w);
+    [PSLR, MW, PAPR] = compute_metrics_single(R, lag, s_w);
     
     MW_factor = MW / MW_lfm;
     PAPR_factor = PAPR / PAPR_lfm;
     
-    c = [MW_factor - MW_target; PAPR_factor - PAPR_target];
+    c = [MW_factor - MW_target; PAPR_factor - PAPR_target; PSLR - PSLR_target];
     ceq = [];
 end
