@@ -49,6 +49,7 @@ MW_target = 1.0;    % 目标主瓣宽度倍数（相对于 LFM 不加窗）
 PAPR_target = 1.0;  % 目标 PAPR 倍数（相对于 LFM 不加窗）
 PSLR_margin = 0.8;  % 目标至少比 Hamming 好 0.8 dB（先保证可行性）
 PSLR_target = PSLR_hamming_ref - PSLR_margin;
+PSLR_floor = -30;   % 全局搜索PSLR下限，避免灾难性初值
 
 % 初始化萤火虫位置（系数 b_n，范围可调）
 lb = -5 * ones(1, dim);   % 下界
@@ -59,7 +60,7 @@ fireflies = lb + (ub - lb) .* rand(nFireflies, dim);
 fitness = zeros(nFireflies, 1);
 for i = 1:nFireflies
     fitness(i) = fitness_func(fireflies(i,:), s_LFM, fs, B, ...
-                              lambda_MW, lambda_PAPR, lambda_PSLR, MW_target, PAPR_target, PSLR_target);
+                              lambda_MW, lambda_PAPR, lambda_PSLR, MW_target, PAPR_target, PSLR_target, PSLR_floor);
 end
 
 %% 萤火虫算法主循环
@@ -80,13 +81,15 @@ for iter = 1:maxIter
                 fireflies(i,:) = max(min(fireflies(i,:), ub), lb);
                 % 重新计算适应度
                 fitness(i) = fitness_func(fireflies(i,:), s_LFM, fs, B, ...
-                                          lambda_MW, lambda_PAPR, lambda_PSLR, MW_target, PAPR_target, PSLR_target);
+                                          lambda_MW, lambda_PAPR, lambda_PSLR, MW_target, PAPR_target, PSLR_target, PSLR_floor);
             end
         end
     end
 
-    % 输出当前最优
-    fprintf('Iter %d: best fitness = %.4f\n', iter, fitness(1));
+    % 输出当前最优（含关键指标）
+    [best_pslr_iter, best_mw_iter, best_papr_iter] = evaluate_metrics(fireflies(1,:), s_LFM, fs, B);
+    fprintf('Iter %d: best fitness = %.4f, PSLR = %.2f dB, MW = %.2e, PAPR = %.2f\n', ...
+        iter, fitness(1), best_pslr_iter, best_mw_iter, best_papr_iter);
 end
 
 %% 最终最优窗系数（萤火虫结果）
@@ -107,6 +110,10 @@ R_temp = abs(R_temp); R_temp = R_temp / max(R_temp);
 R_lfm_ref = abs(R_lfm_ref); R_lfm_ref = R_lfm_ref / max(R_lfm_ref);
 [~, MW_lfm, PAPR_lfm] = compute_metrics_single(R_lfm_ref, lag_lfm_ref, s_LFM);
 
+% Hamming 参考因子（用于后续约束）
+MW_factor_hamming = MW_hamming_ref / MW_lfm;
+PAPR_factor_hamming = PAPR_hamming_ref / PAPR_lfm;
+
 % 萤火虫结果的实际因子
 MW_factor_opt = MW_opt / MW_lfm;
 PAPR_factor_opt = PAPR_opt / PAPR_lfm;
@@ -118,9 +125,10 @@ fprintf('萤火虫结果：MW_factor = %.3f, PAPR_factor = %.3f\n', MW_factor_op
 disp('开始梯度精修...');
 
 % 设置宽松的约束目标：允许因子比萤火虫结果略大（例如 1.1 倍）
-relax_factor = 1.1;
-MW_target_refined = max(1.0, relax_factor * MW_factor_opt);   % 至少为 1.0
-PAPR_target_refined = max(1.0, relax_factor * PAPR_factor_opt);
+delta_MW = 0.2;
+delta_PAPR = 0.2;
+MW_target_refined = MW_factor_hamming + delta_MW;
+PAPR_target_refined = PAPR_factor_hamming + delta_PAPR;
 
 % 目标函数：仅 PSLR（最小化）
 obj_fun = @(b) compute_PSLR(b, s_LFM, fs, B);
@@ -153,13 +161,18 @@ for attempt = 1:max_attempts
     fprintf('精修尝试 %d/%d：约束目标 MW <= %.3f, PAPR <= %.3f, PSLR <= %.2f dB (margin=%.2f)\n', ...
         attempt, max_attempts, MW_target_refined, PAPR_target_refined, PSLR_target_refined, used_margin);
 
-    nonlcon = @(b) compute_constraints_v2(b, s_LFM, fs, B, MW_target_refined, PAPR_target_refined, PSLR_target_refined, MW_lfm, PAPR_lfm);
+    % 阶段A：仅 MW/PAPR 约束，先找可行点
+    nonlcon_stageA = @(b) compute_constraints_v2(b, s_LFM, fs, B, MW_target_refined, PAPR_target_refined, inf, MW_lfm, PAPR_lfm);
+    [b_feasible, ~, exitflag_A, output_A] = fmincon(obj_fun, b_opt, [], [], [], [], lb, ub, nonlcon_stageA, options);
+    [cA_try, ~] = nonlcon_stageA(b_feasible);
 
-    [b_try, fval_try, exitflag_try, output_try] = fmincon(obj_fun, b_opt, [], [], [], [], lb, ub, nonlcon, options);
+    % 阶段B：在可行点附近加入 PSLR 约束精修
+    nonlcon = @(b) compute_constraints_v2(b, s_LFM, fs, B, MW_target_refined, PAPR_target_refined, PSLR_target_refined, MW_lfm, PAPR_lfm);
+    [b_try, fval_try, exitflag_try, output_try] = fmincon(obj_fun, b_feasible, [], [], [], [], lb, ub, nonlcon, options);
     [c_try, ~] = nonlcon(b_try);
 
-    fprintf('尝试结果：exitflag=%d, PSLR=%.2f dB, 约束违反=[%.3e, %.3e, %.3e]\n', ...
-        exitflag_try, fval_try, c_try(1), c_try(2), c_try(3));
+    fprintf('尝试结果：A_exit=%d, B_exit=%d, PSLR=%.2f dB, 约束违反=[%.3e, %.3e, %.3e]\n', ...
+        exitflag_A, exitflag_try, fval_try, c_try(1), c_try(2), c_try(3));
 
     pass_constraints = all(c_try <= 1e-6);
     improves_pslr = (fval_try <= PSLR_before);
@@ -172,6 +185,19 @@ for attempt = 1:max_attempts
         output = output_try;
         c_after = c_try;
         break;
+    elseif exitflag_A > 0 && all(cA_try(1:2) <= 1e-6) && ~accepted
+        % 二级验收：PSLR约束未满足时，保留MW/PAPR可行且PSLR改进的折中解
+        [pslr_A, ~, ~] = evaluate_metrics(b_feasible, s_LFM, fs, B);
+        if pslr_A <= PSLR_before - 0.2
+            accepted = true;
+            b_refined = b_feasible;
+            fval_refined = pslr_A;
+            exitflag = exitflag_A;
+            output = output_A;
+            c_after = [cA_try(1); cA_try(2); pslr_A - PSLR_target_refined];
+            disp('采用二级验收解（MW/PAPR可行且PSLR显著改进）。');
+            break;
+        end
     end
 end
 
@@ -416,7 +442,17 @@ function [PSLR, MW, PAPR] = compute_metrics_single(R, lag, s)
 end
 
 
-function fitness = fitness_func(b, s_LFM, fs, B, lambda_MW, lambda_PAPR, lambda_PSLR, MW_target, PAPR_target, PSLR_target)
+
+function [pslr, mw, papr] = evaluate_metrics(b, s_LFM, fs, B)
+    N = length(s_LFM);
+    W = legendre_window(b, fs, B, N);
+    s_w = ifft(fft(s_LFM) .* W);
+    [R, lag] = xcorr(s_w);
+    R = abs(R); R = R / max(R);
+    [pslr, mw, papr] = compute_metrics_single(R, lag, s_w);
+end
+
+function fitness = fitness_func(b, s_LFM, fs, B, lambda_MW, lambda_PAPR, lambda_PSLR, MW_target, PAPR_target, PSLR_target, PSLR_floor)
     try
         N = length(s_LFM);
         W = legendre_window(b, fs, B, N);
@@ -436,8 +472,9 @@ function fitness = fitness_func(b, s_LFM, fs, B, lambda_MW, lambda_PAPR, lambda_
         penalty_MW = lambda_MW * max(0, MW_factor - MW_target);
         penalty_PAPR = lambda_PAPR * max(0, PAPR_factor - PAPR_target);
         penalty_PSLR = lambda_PSLR * max(0, PSLR - PSLR_target);
+        penalty_floor = 1000 * max(0, PSLR - PSLR_floor);
         
-        fitness = 1*PSLR + 1.2*penalty_MW + 1*penalty_PAPR + 1.2*penalty_PSLR;
+        fitness = 1*PSLR + 1.2*penalty_MW + 1*penalty_PAPR + 1.2*penalty_PSLR + penalty_floor;
         
         if ~isscalar(fitness)
             fitness = fitness(1);
