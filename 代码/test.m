@@ -192,7 +192,7 @@ R_kaiser = abs(R_kaiser); R_kaiser = R_kaiser / max(R_kaiser);
 % =========================================================================
 
 fprintf('\n=================== 性能指标对比 ===================\n');
-fprintf('信号类型\t\tPSLR (dB)\t主瓣宽度\t\tPAPR\n');
+fprintf('信号类型\t\tPSLR (dB,首零点)\t主瓣宽度(-3dB)\tPAPR\n');
 fprintf('原始 LFM\t\t%.2f\t\t%.2e\t\t%.2f\n', PSLR_lfm, MW_lfm_final, PAPR_lfm_final);
 fprintf('Kaiser 加窗 LFM\t\t%.2f\t\t%.2e\t\t%.2f\n', PSLR_kaiser, MW_kaiser_final, PAPR_kaiser_final);
 fprintf('优化 LFM（勒让德窗）\t%.2f\t\t%.2e\t\t%.2f\n', PSLR_opt, MW_opt_final, PAPR_opt_final);
@@ -292,29 +292,62 @@ function P = legendreP(n, x)
 end
 
 function [PSLR, MW, PAPR] = compute_metrics_single(R, lag, s)
-    % 使用 -3 dB 主瓣宽度，避免局部极小值法导致 MW 误判
+    % MW 用 -3 dB 口径；PSLR 用首零点口径，避免视觉与数值不一致
     R = R(:);
     lag = lag(:);
     [~, idx_peak] = max(R);
 
-    % -3 dB 阈值（线性幅度）
+    % ---- MW: -3 dB 主瓣宽度 ----
     th_3dB = 10^(-3/20);
-
-    left_idx = find(R(1:idx_peak) < th_3dB, 1, 'last');
-    if isempty(left_idx)
-        left_idx = 1;
+    left_3dB = find(R(1:idx_peak) < th_3dB, 1, 'last');
+    if isempty(left_3dB)
+        left_3dB = 1;
     end
-
-    right_rel = find(R(idx_peak:end) < th_3dB, 1, 'first');
-    if isempty(right_rel)
-        right_idx = length(R);
+    right_3dB_rel = find(R(idx_peak:end) < th_3dB, 1, 'first');
+    if isempty(right_3dB_rel)
+        right_3dB = length(R);
     else
-        right_idx = idx_peak + right_rel - 1;
+        right_3dB = idx_peak + right_3dB_rel - 1;
+    end
+    MW = lag(right_3dB) - lag(left_3dB);
+
+    % ---- PSLR: 首零点（首个局部极小值）界定主瓣 ----
+    left_null = idx_peak;
+    for i = idx_peak:-1:2
+        if R(i-1) > R(i) && R(i) < R(i+1)
+            left_null = i;
+            break;
+        end
     end
 
-    MW = lag(right_idx) - lag(left_idx);
+    right_null = idx_peak;
+    for i = idx_peak:length(R)-1
+        if R(i) > R(i+1) && R(i+1) < R(i+2)
+            right_null = i+1;
+            break;
+        end
+    end
 
-    sidelobe_region = [R(1:left_idx-1); R(right_idx+1:end)];
+    % 首零点未找到时回退到 -20 dB 交点，避免把主瓣肩部计入旁瓣
+    th_20dB = 10^(-20/20);
+    if left_null == idx_peak
+        left_20 = find(R(1:idx_peak) < th_20dB, 1, 'last');
+        if ~isempty(left_20)
+            left_null = left_20;
+        else
+            left_null = left_3dB;
+        end
+    end
+    if right_null == idx_peak
+        right_20_rel = find(R(idx_peak:end) < th_20dB, 1, 'first');
+        if ~isempty(right_20_rel)
+            right_null = idx_peak + right_20_rel - 1;
+        else
+            right_null = right_3dB;
+        end
+    end
+
+    sidelobe_region = [R(1:left_null-1); R(right_null+1:end)];
     if isempty(sidelobe_region)
         PSLR = -100;
     else
