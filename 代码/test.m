@@ -47,9 +47,9 @@ lambda_PAPR = 8;    % PAPR 惩罚系数（适度放松，优先旁瓣抑制）
 lambda_PSLR = 80;   % 不超过 Hamming 的 PSLR 惩罚系数（增强约束）
 MW_target = 1.0;    % 目标主瓣宽度倍数（相对于 LFM 不加窗）
 PAPR_target = 1.0;  % 目标 PAPR 倍数（相对于 LFM 不加窗）
-PSLR_margin = 1.5;  % 目标至少比 Hamming 好 1.5 dB
+PSLR_margin = 0.8;  % 目标至少比 Hamming 好 0.8 dB（先保证可行性）
 PSLR_target = PSLR_hamming_ref - PSLR_margin;
-w_ISLR = 0.5;       % ISLR 权重，提升整体旁瓣能量抑制
+w_ISLR = 0.2;       % ISLR 权重（避免压制 PSLR 主目标）
 
 % 初始化萤火虫位置（系数 b_n，范围可调）
 lb = -5 * ones(1, dim);   % 下界
@@ -122,44 +122,80 @@ disp('开始梯度精修...');
 relax_factor = 1.1;
 MW_target_refined = max(1.0, relax_factor * MW_factor_opt);   % 至少为 1.0
 PAPR_target_refined = max(1.0, relax_factor * PAPR_factor_opt);
-PSLR_target_refined = PSLR_hamming_ref - PSLR_margin;
-fprintf('精修约束目标：MW <= %.3f, PAPR <= %.3f, PSLR <= %.2f dB\n', MW_target_refined, PAPR_target_refined, PSLR_target_refined);
 
 % 目标函数：仅 PSLR（最小化）
 obj_fun = @(b) compute_PSLR(b, s_LFM, fs, B);
 
-% 非线性约束函数（传入参考指标）
-nonlcon = @(b) compute_constraints_v2(b, s_LFM, fs, B, MW_target_refined, PAPR_target_refined, PSLR_target_refined, MW_lfm, PAPR_lfm);
-
 % fmincon 选项（使用 interior-point 算法，放宽容差）
 options = optimoptions('fmincon', 'Display', 'iter', 'Algorithm', 'interior-point', ...
     'OptimalityTolerance', 1e-4, 'ConstraintTolerance', 1e-4, ...
-    'StepTolerance', 1e-8, 'MaxFunctionEvaluations', 1000);
+    'StepTolerance', 1e-8, 'MaxFunctionEvaluations', 2000);
 
-% 调用 fmincon
-[b_refined, fval_refined, exitflag, output] = fmincon(obj_fun, b_opt, [], [], [], [], lb, ub, nonlcon, options);
+% 计算精修前 PSLR
+PSLR_before = compute_PSLR(b_opt, s_LFM, fs, B);
 
-% 显示退出信息
-fprintf('fmincon 退出标志: %d\n', exitflag);
-disp(output.message);
+% 自适应放松 PSLR 目标，避免不可行导致精修劣化
+base_margin = PSLR_margin;
+max_attempts = 5;
+margin_step = 0.2;
+accepted = false;
+
+b_refined = b_opt;
+fval_refined = PSLR_before;
+exitflag = -1;
+output.message = 'Not started';
+c_after = [inf; inf; inf];
+used_margin = base_margin;
+
+for attempt = 1:max_attempts
+    used_margin = max(0, base_margin - (attempt-1) * margin_step);
+    PSLR_target_refined = PSLR_hamming_ref - used_margin;
+
+    fprintf('精修尝试 %d/%d：约束目标 MW <= %.3f, PAPR <= %.3f, PSLR <= %.2f dB (margin=%.2f)\n', ...
+        attempt, max_attempts, MW_target_refined, PAPR_target_refined, PSLR_target_refined, used_margin);
+
+    nonlcon = @(b) compute_constraints_v2(b, s_LFM, fs, B, MW_target_refined, PAPR_target_refined, PSLR_target_refined, MW_lfm, PAPR_lfm);
+
+    [b_try, fval_try, exitflag_try, output_try] = fmincon(obj_fun, b_opt, [], [], [], [], lb, ub, nonlcon, options);
+    [c_try, ~] = nonlcon(b_try);
+
+    fprintf('尝试结果：exitflag=%d, PSLR=%.2f dB, 约束违反=[%.3e, %.3e, %.3e]\n', ...
+        exitflag_try, fval_try, c_try(1), c_try(2), c_try(3));
+
+    pass_constraints = all(c_try <= 1e-6);
+    improves_pslr = (fval_try <= PSLR_before);
+
+    if exitflag_try > 0 && pass_constraints && improves_pslr
+        accepted = true;
+        b_refined = b_try;
+        fval_refined = fval_try;
+        exitflag = exitflag_try;
+        output = output_try;
+        c_after = c_try;
+        break;
+    end
+end
+
+if ~accepted
+    disp('梯度精修未通过验收，回退到精修前结果。');
+    b_refined = b_opt;
+    fval_refined = PSLR_before;
+    c_after = [0; 0; 0];
+end
 
 % 计算精修前后的 PSLR
-PSLR_before = compute_PSLR(b_opt, s_LFM, fs, B);
 PSLR_after = fval_refined;
 fprintf('精修前 PSLR = %.2f dB\n', PSLR_before);
 fprintf('精修后 PSLR = %.2f dB\n', PSLR_after);
-
-% 检查约束满足情况（精修后）
-[c_after, ~] = nonlcon(b_refined);
-fprintf('精修后约束违反：MW_factor - target = %.3e, PAPR_factor - target = %.3e, PSLR - target = %.3e\n', c_after(1), c_after(2), c_after(3));
-
-if exitflag > 0
+if accepted
+    fprintf('精修后约束违反：MW_factor - target = %.3e, PAPR_factor - target = %.3e, PSLR - target = %.3e\n', c_after(1), c_after(2), c_after(3));
+    fprintf('精修采用的 PSLR margin = %.2f dB\n', used_margin);
+    fprintf('fmincon 退出标志: %d\n', exitflag);
+    disp(output.message);
     disp('梯度精修成功完成。');
-else
-    disp('梯度精修可能未完全收敛，但将继续使用当前结果。');
 end
 
-% 更新最优系数
+% 更新最优系数（仅验收通过才更新）
 b_opt = b_refined;
 disp('精修后的 Legendre 系数:');
 disp(b_opt);
