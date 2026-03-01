@@ -14,14 +14,14 @@ f0 = 0;             % 载频（基带信号，设为0）
 % 派生参数
 N = round(T * fs);  % 样本点数
 t = (-N/2:N/2-1)' / fs;  % 时间向量（对称）
-f = linspace(-fs/2, fs/2, N)'; % 频率向量
+f = (-N/2:N/2-1)' * (fs/N); % 居中频率向量（与 fftshift 对齐）
 
 % 生成 LFM 信号（基带）
 k = B / T;          % 调频斜率
 s_LFM = exp(1j * pi * k * t.^2);  % 复基带 LFM
 
 %% 萤火虫算法参数
-dim = 5;            % 勒让德多项式阶数（使用 1,3,5,7,9 奇数阶）
+dim = 5;            % 勒让德多项式系数个数（使用 0,2,4,6,8 偶数阶，保证偶对称）
 nFireflies = 30;    % 萤火虫数量
 maxIter = 100;      % 最大迭代次数
 gamma = 1;          % 光吸收系数
@@ -147,7 +147,7 @@ disp(b_opt);
 
 %% 生成优化后的加窗信号
 [W_opt, f] = legendre_window(b_opt, fs, B, N);
-s_w_opt = ifft(fft(s_LFM) .* W_opt);  % 优化 LFM（勒让德窗加窗）
+s_w_opt = ifft(fft(s_LFM) .* W_opt);  % 优化 LFM（勒让德窗加窗，W_opt 已是 FFT 顺序）
 
 %% ========================================================================
 %  对比信号生成：原始 LFM 和 Kaiser 窗加窗 LFM
@@ -159,12 +159,13 @@ s_LFM_orig = s_LFM;
 % 2. Kaiser 窗加窗 LFM（频域加窗，beta=4.4 以获得 -34.45 dB PSLR）
 beta_kaiser = 4.4;
 % 生成 Kaiser 窗（长度 = 带宽内的采样点数）
-idx_band = abs(f) <= B/2;  % 与勒让德窗相同的带宽内索引
+idx_band = abs(f) <= B/2;  % 以居中频率轴构建带宽内索引
 N_band = sum(idx_band);
 win_kaiser_time = kaiser(N_band, beta_kaiser);  % 时域 Kaiser 窗（对称）
-% 将其放置到频谱的相应位置
-W_kaiser = zeros(N, 1);
-W_kaiser(idx_band) = win_kaiser_time;  % 直接放置，因为频谱已对称排列
+% 在居中频谱上构建窗，再转换到 FFT 顺序
+W_kaiser_centered = zeros(N, 1);
+W_kaiser_centered(idx_band) = win_kaiser_time;
+W_kaiser = ifftshift(W_kaiser_centered);
 % 加窗
 s_kaiser = ifft(fft(s_LFM_orig) .* W_kaiser);
 
@@ -233,8 +234,10 @@ grid on;
 
 figure(3);
 f_MHz = f / 1e6;
-plot(f_MHz, 20*log10(abs(W_opt)+eps), 'g-', 'LineWidth', 1.5); hold on;
-plot(f_MHz, 20*log10(abs(W_kaiser)+eps), 'r--', 'LineWidth', 1.5);
+W_opt_centered = fftshift(W_opt);
+W_kaiser_centered = fftshift(W_kaiser);
+plot(f_MHz, 20*log10(abs(W_opt_centered)+eps), 'g-', 'LineWidth', 1.5); hold on;
+plot(f_MHz, 20*log10(abs(W_kaiser_centered)+eps), 'r--', 'LineWidth', 1.5);
 xlabel('Frequency (MHz)'); ylabel('Magnitude (dB)');
 title('Frequency Domain Window Functions (dB)');
 legend('Optimized Legendre Window', 'Kaiser Window (beta=4.4)');
@@ -246,21 +249,27 @@ ylim([-60, 5]);  % 根据窗函数动态调整
 %% ========================================================================
 
 function [W, f] = legendre_window(b, fs, B, N)
-    f = linspace(-fs/2, fs/2, N)';
+    % 以居中频率轴构建偶对称窗，再转换到 FFT 顺序
+    f = (-N/2:N/2-1)' * (fs/N);
     f_norm = 2 * f / B;
     idx = abs(f) <= B/2;
-    W = zeros(N,1);
+
+    W_centered = zeros(N,1);
     if any(idx)
         f_seg = f_norm(idx);
-        W_seg = zeros(size(f_seg));
+        W_seg_raw = zeros(size(f_seg));
         for m = 1:length(b)
-            n = 2*m - 1;
+            n = 2*(m-1);  % 0,2,4,... 偶数阶，保证偶对称
             P = legendreP(n, f_seg);
-            W_seg = W_seg + b(m) * P;
+            W_seg_raw = W_seg_raw + b(m) * P;
         end
-        W(idx) = W_seg;
+        % 用指数映射保证非负，避免 max(...,0) 截断导致半边塌陷
+        W_seg = exp(W_seg_raw - max(W_seg_raw));
+        W_centered(idx) = W_seg;
     end
-    W = max(real(W), 0);
+
+    % 转换到 FFT 顺序，便于直接与 fft(s) 相乘
+    W = ifftshift(W_centered);
 end
 
 function P = legendreP(n, x)
