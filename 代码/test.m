@@ -150,25 +150,24 @@ disp(b_opt);
 s_w_opt = ifft(fft(s_LFM) .* W_opt);  % 优化 LFM（勒让德窗加窗，W_opt 已是 FFT 顺序）
 
 %% ========================================================================
-%  对比信号生成：原始 LFM 和 Kaiser 窗加窗 LFM
+%  对比信号生成：原始 LFM 和 Hamming 窗加窗 LFM
 % =========================================================================
 
 % 1. 原始 LFM
 s_LFM_orig = s_LFM;
 
-% 2. Kaiser 窗加窗 LFM（频域加窗，beta=4.4；实际 PSLR 与脉压口径相关）
-beta_kaiser = 4.4;
-% 生成 Kaiser 窗（长度 = 带宽内的采样点数）
+% 2. Hamming 窗加窗 LFM（频域加窗）
+% 生成 Hamming 窗（长度 = 带宽内的采样点数）
 idx_band = abs(f) <= B/2;  % 以居中频率轴构建带宽内索引
 N_band = sum(idx_band);
-win_kaiser_time = kaiser(N_band, beta_kaiser);  % 时域 Kaiser 窗（对称）
+win_hamming_time = hamming(N_band);  % 时域 Hamming 窗（对称）
 % 在居中频谱上构建窗，再转换到 FFT 顺序
-W_kaiser_centered = zeros(N, 1);
-W_kaiser_centered(idx_band) = win_kaiser_time;
-W_kaiser_centered = W_kaiser_centered / (max(W_kaiser_centered) + eps);
-W_kaiser = ifftshift(W_kaiser_centered);
+W_hamming_centered = zeros(N, 1);
+W_hamming_centered(idx_band) = win_hamming_time;
+W_hamming_centered = W_hamming_centered / (max(W_hamming_centered) + eps);
+W_hamming = ifftshift(W_hamming_centered);
 % 加窗
-s_kaiser = ifft(fft(s_LFM_orig) .* W_kaiser);
+s_hamming = ifft(fft(s_LFM_orig) .* W_hamming);
 
 %% ========================================================================
 %  性能指标计算
@@ -179,13 +178,13 @@ s_kaiser = ifft(fft(s_LFM_orig) .* W_kaiser);
 R_lfm = abs(R_lfm); R_lfm = R_lfm / max(R_lfm);
 [R_opt, ~] = xcorr(s_w_opt);
 R_opt = abs(R_opt); R_opt = R_opt / max(R_opt);
-[R_kaiser, ~] = xcorr(s_kaiser);
-R_kaiser = abs(R_kaiser); R_kaiser = R_kaiser / max(R_kaiser);
+[R_hamming, ~] = xcorr(s_hamming);
+R_hamming = abs(R_hamming); R_hamming = R_hamming / max(R_hamming);
 
 % 计算指标
 [PSLR_lfm, MW_lfm_final, PAPR_lfm_final] = compute_metrics_single(R_lfm, lag, s_LFM_orig);
 [PSLR_opt, MW_opt_final, PAPR_opt_final] = compute_metrics_single(R_opt, lag, s_w_opt);
-[PSLR_kaiser, MW_kaiser_final, PAPR_kaiser_final] = compute_metrics_single(R_kaiser, lag, s_kaiser);
+[PSLR_hamming, MW_hamming_final, PAPR_hamming_final] = compute_metrics_single(R_hamming, lag, s_hamming);
 
 %% ========================================================================
 %  输出对比表格
@@ -194,7 +193,7 @@ R_kaiser = abs(R_kaiser); R_kaiser = R_kaiser / max(R_kaiser);
 fprintf('\n=================== 性能指标对比 ===================\n');
 fprintf('信号类型\t\tPSLR (dB,首零点)\t主瓣宽度(-3dB)\tPAPR\n');
 fprintf('原始 LFM\t\t%.2f\t\t%.2e\t\t%.2f\n', PSLR_lfm, MW_lfm_final, PAPR_lfm_final);
-fprintf('Kaiser 加窗 LFM\t\t%.2f\t\t%.2e\t\t%.2f\n', PSLR_kaiser, MW_kaiser_final, PAPR_kaiser_final);
+fprintf('Hamming 加窗 LFM\t\t%.2f\t\t%.2e\t\t%.2f\n', PSLR_hamming, MW_hamming_final, PAPR_hamming_final);
 fprintf('优化 LFM（勒让德窗）\t%.2f\t\t%.2e\t\t%.2f\n', PSLR_opt, MW_opt_final, PAPR_opt_final);
 fprintf('========================================================\n');
 
@@ -204,11 +203,11 @@ fprintf('========================================================\n');
 
 figure(1);
 plot(lag/fs*1e6, 20*log10(R_lfm), 'b-', 'LineWidth', 1.5); hold on;
-plot(lag/fs*1e6, 20*log10(R_kaiser), 'r--', 'LineWidth', 1.5);
+plot(lag/fs*1e6, 20*log10(R_hamming), 'r--', 'LineWidth', 1.5);
 plot(lag/fs*1e6, 20*log10(R_opt), 'g-.', 'LineWidth', 1.5);
 xlabel('Time (μs)'); ylabel('Normalized Magnitude (dB)');
 title('Pulse Compression Output Comparison');
-legend('LFM', 'Kaiser-windowed LFM', 'Optimized LFM (Legendre)');
+legend('LFM', 'Hamming-windowed LFM', 'Optimized LFM (Legendre)');
 grid on; xlim([-0.5 0.5]); ylim([-60 5]);
 
 %% ========================================================================
@@ -226,22 +225,22 @@ range_idx = max(1, center_idx-half_width) : min(length(R_lfm), center_idx+half_w
 t_corr = lag / fs * 1e6;
 
 plot(t_corr(range_idx), R_lfm(range_idx), 'k-', 'LineWidth', 1.5); hold on;
-plot(t_corr(range_idx), R_kaiser(range_idx), 'r--', 'LineWidth', 1.5);
+plot(t_corr(range_idx), R_hamming(range_idx), 'r--', 'LineWidth', 1.5);
 plot(t_corr(range_idx), R_opt(range_idx), 'b-.', 'LineWidth', 1.5);
 xlabel('时延 (μs)'); ylabel('归一化幅度');
 title('自相关主瓣区域');
-legend('原始 LFM', 'Kaiser 加窗', '优化勒让德窗', 'Location', 'best');
+legend('原始 LFM', 'Hamming 加窗', '优化勒让德窗', 'Location', 'best');
 grid on;
 
 figure(3);
 f_MHz = f / 1e6;
 W_opt_centered = fftshift(W_opt);
-W_kaiser_centered = fftshift(W_kaiser);
+W_hamming_centered = fftshift(W_hamming);
 plot(f_MHz, 20*log10(abs(W_opt_centered)+eps), 'g-', 'LineWidth', 1.5); hold on;
-plot(f_MHz, 20*log10(abs(W_kaiser_centered)+eps), 'r--', 'LineWidth', 1.5);
+plot(f_MHz, 20*log10(abs(W_hamming_centered)+eps), 'r--', 'LineWidth', 1.5);
 xlabel('Frequency (MHz)'); ylabel('Magnitude (dB)');
 title('Frequency Domain Window Functions (dB)');
-legend('Optimized Legendre Window', 'Kaiser Window (beta=4.4)');
+legend('Optimized Legendre Window', 'Hamming Window');
 grid on;
 xlim([-B/2/1e6, B/2/1e6]);
 ylim([-60, 5]);  % 根据窗函数动态调整
