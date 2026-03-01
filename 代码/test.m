@@ -527,3 +527,9 @@ function [c, ceq] = compute_constraints_v2(b, s_LFM, fs, B, MW_target, PAPR_targ
     end
     ceq = [];
 end
+
+
+function islr = compute_ISLR(varargin)
+% 兼容占位：历史版本可能仍引用此函数，当前流程已不使用 ISLR
+    islr = 0;
+end
