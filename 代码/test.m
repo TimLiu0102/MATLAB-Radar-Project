@@ -37,7 +37,7 @@ fprintf('参考 Hamming：PSLR = %.2f dB, MW = %.2e, PAPR = %.2f\n', PSLR_hammin
 
 %% 萤火虫算法参数
 dim = 5;            % 勒让德多项式系数个数（使用 0,2,4,6,8 偶数阶）
-nFireflies = 40;    % 萤火虫数量（增大种群提升全局搜索能力）
+nFireflies = 30;    % 萤火虫数量（增大种群提升全局搜索能力）
 maxIter = 150;      % 最大迭代次数（增加收敛机会）
 gamma = 1;          % 光吸收系数
 beta0 = 1;          % 初始吸引度
