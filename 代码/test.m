@@ -37,8 +37,8 @@ fprintf('参考 Hamming：PSLR = %.2f dB, MW = %.2e, PAPR = %.2f\n', PSLR_hammin
 
 %% 萤火虫算法参数
 dim = 5;            % 勒让德多项式系数个数（使用 0,2,4,6,8 偶数阶）
-nFireflies = 30;    % 萤火虫数量
-maxIter = 100;      % 最大迭代次数
+nFireflies = 40;    % 萤火虫数量（增大种群提升全局搜索能力）
+maxIter = 150;      % 最大迭代次数（增加收敛机会）
 gamma = 1;          % 光吸收系数
 beta0 = 1;          % 初始吸引度
 alpha = 0.2;        % 随机步长因子
@@ -47,54 +47,79 @@ lambda_PAPR = 8;    % PAPR 惩罚系数（适度放松，优先旁瓣抑制）
 lambda_PSLR = 80;   % 不超过 Hamming 的 PSLR 惩罚系数（增强约束）
 MW_target = 1.0;    % 目标主瓣宽度倍数（相对于 LFM 不加窗）
 PAPR_target = 1.0;  % 目标 PAPR 倍数（相对于 LFM 不加窗）
-PSLR_margin = 0.8;  % 目标至少比 Hamming 好 0.8 dB（先保证可行性）
+PSLR_margin = 1.2;  % 目标至少比 Hamming 好 1.2 dB（拉大与 Hamming 的差距）
 PSLR_target = PSLR_hamming_ref - PSLR_margin;
 PSLR_floor = -30;   % 全局搜索PSLR下限，避免灾难性初值
 
-% 初始化萤火虫位置（系数 b_n，范围可调）
-lb = -5 * ones(1, dim);   % 下界
-ub = 5 * ones(1, dim);    % 上界
-fireflies = lb + (ub - lb) .* rand(nFireflies, dim);
+% 参数边界（系数 b_n 范围可调）
+lb = -5 * ones(1, dim);
+ub = 5 * ones(1, dim);
 
-%% 计算初始适应度
-fitness = zeros(nFireflies, 1);
-for i = 1:nFireflies
-    fitness(i) = fitness_func(fireflies(i,:), s_LFM, fs, B, ...
-                              lambda_MW, lambda_PAPR, lambda_PSLR, MW_target, PAPR_target, PSLR_target, PSLR_floor);
-end
+% 多次重启全局搜索（降低陷入局部最优概率）
+nRestarts = 4;
+global_best_fitness = inf;
+global_best_b = zeros(1, dim);
 
-%% 萤火虫算法主循环
-for iter = 1:maxIter
-    [fitness, idx] = sort(fitness);         % 按亮度排序（最小化问题）
-    fireflies = fireflies(idx, :);
+for restart = 1:nRestarts
+    % 初始化萤火虫位置（系数 b_n，范围可调）
+    fireflies = lb + (ub - lb) .* rand(nFireflies, dim);
 
+    %% 计算初始适应度
+    fitness = zeros(nFireflies, 1);
     for i = 1:nFireflies
-        for j = 1:nFireflies
-            if fitness(j) < fitness(i)       % j 比 i 亮
-                r = norm(fireflies(i,:) - fireflies(j,:));
-                beta = beta0 * exp(-gamma * r^2);
-                % 移动
-                fireflies(i,:) = fireflies(i,:) + ...
-                    beta * (fireflies(j,:) - fireflies(i,:)) + ...
-                    alpha * (rand(1,dim) - 0.5) .* (ub - lb);
-                % 边界处理
-                fireflies(i,:) = max(min(fireflies(i,:), ub), lb);
-                % 重新计算适应度
-                fitness(i) = fitness_func(fireflies(i,:), s_LFM, fs, B, ...
-                                          lambda_MW, lambda_PAPR, lambda_PSLR, MW_target, PAPR_target, PSLR_target, PSLR_floor);
-            end
-        end
+        fitness(i) = fitness_func(fireflies(i,:), s_LFM, fs, B, ...
+                                  lambda_MW, lambda_PAPR, lambda_PSLR, MW_target, PAPR_target, PSLR_target, PSLR_floor);
     end
 
-    % 输出当前最优（含关键指标）
-    [best_pslr_iter, best_mw_iter, best_papr_iter] = evaluate_metrics(fireflies(1,:), s_LFM, fs, B);
-    fprintf('Iter %d: best fitness = %.4f, PSLR = %.2f dB, MW = %.2e, PAPR = %.2f\n', ...
-        iter, fitness(1), best_pslr_iter, best_mw_iter, best_papr_iter);
+    %% 萤火虫算法主循环
+    for iter = 1:maxIter
+        [fitness, idx] = sort(fitness);         % 按亮度排序（最小化问题）
+        fireflies = fireflies(idx, :);
+
+        for i = 1:nFireflies
+            for j = 1:nFireflies
+                if fitness(j) < fitness(i)       % j 比 i 亮
+                    r = norm(fireflies(i,:) - fireflies(j,:));
+                    beta = beta0 * exp(-gamma * r^2);
+                    % 移动
+                    fireflies(i,:) = fireflies(i,:) + ...
+                        beta * (fireflies(j,:) - fireflies(i,:)) + ...
+                        alpha * (rand(1,dim) - 0.5) .* (ub - lb);
+                    % 边界处理
+                    fireflies(i,:) = max(min(fireflies(i,:), ub), lb);
+                    % 重新计算适应度
+                    fitness(i) = fitness_func(fireflies(i,:), s_LFM, fs, B, ...
+                                              lambda_MW, lambda_PAPR, lambda_PSLR, MW_target, PAPR_target, PSLR_target, PSLR_floor);
+                end
+            end
+        end
+
+        % 输出当前最优（含关键指标）
+        [best_pslr_iter, best_mw_iter, best_papr_iter] = evaluate_metrics(fireflies(1,:), s_LFM, fs, B);
+        fprintf('Restart %d/%d, Iter %d: best fitness = %.4f, PSLR = %.2f dB, MW = %.2e, PAPR = %.2f\n', ...
+            restart, nRestarts, iter, fitness(1), best_pslr_iter, best_mw_iter, best_papr_iter);
+    end
+
+    % 当前重启最优
+    [fitness, idx] = sort(fitness);
+    fireflies = fireflies(idx, :);
+    restart_best_b = fireflies(1, :);
+    restart_best_fit = fitness(1);
+
+    [restart_pslr, restart_mw, restart_papr] = evaluate_metrics(restart_best_b, s_LFM, fs, B);
+    fprintf('Restart %d 结束：fitness=%.4f, PSLR=%.2f dB, MW=%.2e, PAPR=%.2f\n', ...
+        restart, restart_best_fit, restart_pslr, restart_mw, restart_papr);
+
+    if restart_best_fit < global_best_fitness
+        global_best_fitness = restart_best_fit;
+        global_best_b = restart_best_b;
+    end
 end
 
-%% 最终最优窗系数（萤火虫结果）
-b_opt = fireflies(1, :);
-disp('萤火虫优化得到的 Legendre 系数:');
+%% 最终最优窗系数（多次重启后的最优）
+b_opt = global_best_b;
+fprintf('多次重启后全局最优 fitness = %.4f\n', global_best_fitness);
+disp('优化得到的 Legendre 系数:');
 disp(b_opt);
 
 % 计算萤火虫结果的性能指标（用于后续约束设置）
