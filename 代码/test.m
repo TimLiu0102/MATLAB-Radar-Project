@@ -496,6 +496,7 @@ function fitness = fitness_func(b, s_LFM, fs, B, lambda_MW, lambda_PAPR, lambda_
         [R, lag] = xcorr(s_w);
         R = safe_normalize(abs(R));
         [PSLR, MW, PAPR] = compute_metrics_single(R, lag, s_w);
+        ISLR = compute_ISLR(R, lag);
         
         [R_lfm, lag_lfm] = xcorr(s_LFM);
         R_lfm = safe_normalize(abs(R_lfm));
