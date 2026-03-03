@@ -255,101 +255,107 @@ disp(b_opt);
 s_w_opt = ifft(fft(s_LFM) .* W_opt);  % 优化 LFM（勒让德窗加窗，W_opt 已是 FFT 顺序）
 
 %% ========================================================================
-%  对比信号生成：原始 LFM 和 Hamming 窗加窗 LFM
+%  对比信号生成：原始 LFM 与多窗函数（统一图表）
 % =========================================================================
 
-% 1. 原始 LFM
 s_LFM_orig = s_LFM;
 
-% 2. Hamming 窗加窗 LFM（频域加窗）
-% 生成 Hamming 窗（长度 = 带宽内的采样点数）
-idx_band = abs(f) <= B/2;  % 以居中频率轴构建带宽内索引
-N_band = sum(idx_band);
-win_hamming_time = hamming(N_band);  % 时域 Hamming 窗（对称）
-% 在居中频谱上构建窗，再转换到 FFT 顺序
-W_hamming_centered = zeros(N, 1);
-W_hamming_centered(idx_band) = win_hamming_time;
-W_hamming_centered = W_hamming_centered / (max(W_hamming_centered) + eps);
-W_hamming = ifftshift(W_hamming_centered);
-% 加窗
+% 频域窗：Proposed + Hamming/Kaiser/Taylor/Chebyshev
+W_hamming = build_reference_window_ext('Hamming', f, B, N);
+W_kaiser = build_reference_window_ext('Kaiser', f, B, N);
+W_taylor = build_reference_window_ext('Taylor', f, B, N);
+W_cheb = build_reference_window_ext('Chebyshev', f, B, N);
+
+% 对应加窗信号
 s_hamming = ifft(fft(s_LFM_orig) .* W_hamming);
+s_kaiser = ifft(fft(s_LFM_orig) .* W_kaiser);
+s_taylor = ifft(fft(s_LFM_orig) .* W_taylor);
+s_cheb = ifft(fft(s_LFM_orig) .* W_cheb);
 
 %% ========================================================================
-%  性能指标计算
+%  性能指标计算（统一使用 compute_metrics_single）
 % =========================================================================
 
-% 计算脉冲压缩输出（自相关）
-[R_lfm, lag] = xcorr(s_LFM_orig);
-R_lfm = safe_normalize(abs(R_lfm));
-[R_opt, ~] = xcorr(s_w_opt);
-R_opt = safe_normalize(abs(R_opt));
-[R_hamming, ~] = xcorr(s_hamming);
-R_hamming = safe_normalize(abs(R_hamming));
+[R_lfm, lag] = xcorr(s_LFM_orig);    R_lfm = safe_normalize(abs(R_lfm));
+[R_opt, ~] = xcorr(s_w_opt);         R_opt = safe_normalize(abs(R_opt));
+[R_hamming, ~] = xcorr(s_hamming);   R_hamming = safe_normalize(abs(R_hamming));
+[R_kaiser, ~] = xcorr(s_kaiser);     R_kaiser = safe_normalize(abs(R_kaiser));
+[R_taylor, ~] = xcorr(s_taylor);     R_taylor = safe_normalize(abs(R_taylor));
+[R_cheb, ~] = xcorr(s_cheb);         R_cheb = safe_normalize(abs(R_cheb));
 
-% 计算指标
 [PSLR_lfm, MW_lfm_final, PAPR_lfm_final] = compute_metrics_single(R_lfm, lag, s_LFM_orig);
 [PSLR_opt, MW_opt_final, PAPR_opt_final] = compute_metrics_single(R_opt, lag, s_w_opt);
 [PSLR_hamming, MW_hamming_final, PAPR_hamming_final] = compute_metrics_single(R_hamming, lag, s_hamming);
-
+[PSLR_kaiser, MW_kaiser_final, PAPR_kaiser_final] = compute_metrics_single(R_kaiser, lag, s_kaiser);
+[PSLR_taylor, MW_taylor_final, PAPR_taylor_final] = compute_metrics_single(R_taylor, lag, s_taylor);
+[PSLR_cheb, MW_cheb_final, PAPR_cheb_final] = compute_metrics_single(R_cheb, lag, s_cheb);
 
 %% ========================================================================
-%  输出对比表格
+%  输出对比表格（绝对值）
 % =========================================================================
 
-fprintf('\n=================== 性能指标对比 ===================\n');
-fprintf('信号类型\t\tPSLR (dB,首零点)\t主瓣宽度(-3dB)\tPAPR\n');
-fprintf('原始 LFM\t\t%.2f\t\t%.2e\t\t%.2f\n', PSLR_lfm, MW_lfm_final, PAPR_lfm_final);
-fprintf('Hamming 加窗 LFM\t\t%.2f\t\t%.2e\t\t%.2f\n', PSLR_hamming, MW_hamming_final, PAPR_hamming_final);
+fprintf('\n=================== 性能指标对比（绝对值） ===================\n');
+fprintf('信号类型\t\t\tPSLR (dB,首零点)\t主瓣宽度(-3dB)\tPAPR\n');
+fprintf('原始 LFM\t\t\t%.2f\t\t%.2e\t\t%.2f\n', PSLR_lfm, MW_lfm_final, PAPR_lfm_final);
 fprintf('优化 LFM（勒让德窗）\t%.2f\t\t%.2e\t\t%.2f\n', PSLR_opt, MW_opt_final, PAPR_opt_final);
-fprintf('========================================================\n');
+fprintf('Hamming 加窗 LFM\t\t%.2f\t\t%.2e\t\t%.2f\n', PSLR_hamming, MW_hamming_final, PAPR_hamming_final);
+fprintf('Kaiser 加窗 LFM\t\t%.2f\t\t%.2e\t\t%.2f\n', PSLR_kaiser, MW_kaiser_final, PAPR_kaiser_final);
+fprintf('Taylor 加窗 LFM\t\t%.2f\t\t%.2e\t\t%.2f\n', PSLR_taylor, MW_taylor_final, PAPR_taylor_final);
+fprintf('Chebyshev 加窗 LFM\t%.2f\t\t%.2e\t\t%.2f\n', PSLR_cheb, MW_cheb_final, PAPR_cheb_final);
+fprintf('===============================================================\n');
 
 %% ========================================================================
-%  绘制自相关函数对比图（dB）
+%  图1：自相关函数对比图（dB）
 % =========================================================================
 
 figure(1);
-plot(lag/fs*1e6, 20*log10(R_lfm), 'b-', 'LineWidth', 1.5); hold on;
-plot(lag/fs*1e6, 20*log10(R_hamming), 'r--', 'LineWidth', 1.5);
-plot(lag/fs*1e6, 20*log10(R_opt), 'g-.', 'LineWidth', 1.5);
+plot(lag/fs*1e6, 20*log10(R_lfm+eps), 'k-', 'LineWidth', 1.2); hold on;
+plot(lag/fs*1e6, 20*log10(R_opt+eps), 'g-', 'LineWidth', 1.6);
+plot(lag/fs*1e6, 20*log10(R_hamming+eps), 'r--', 'LineWidth', 1.2);
+plot(lag/fs*1e6, 20*log10(R_kaiser+eps), 'b-.', 'LineWidth', 1.2);
+plot(lag/fs*1e6, 20*log10(R_taylor+eps), 'm:', 'LineWidth', 1.4);
+plot(lag/fs*1e6, 20*log10(R_cheb+eps), 'c--', 'LineWidth', 1.2);
 xlabel('Time (μs)'); ylabel('Normalized Magnitude (dB)');
 title('Pulse Compression Output Comparison');
-legend('LFM', 'Hamming-windowed LFM', 'Optimized LFM (Legendre)');
-grid on; xlim([-0.5 0.5]); ylim([-60 5]);
+legend('LFM','Proposed (Legendre)','Hamming','Kaiser','Taylor','Chebyshev','Location','best');
+grid on; xlim([-0.5 0.5]); ylim([-80 5]);
 
 %% ========================================================================
-%  绘制主瓣区域放大对比图（线性幅度）
+%  图2：主瓣区域放大对比图（线性幅度）
 % =========================================================================
 figure(2);
-% 找到主瓣中心索引（以原始 LFM 为准）
 [~, idx_peak] = max(R_lfm);
-center_idx = idx_peak;
-% 截取主瓣附近 ±50 点（可根据实际分辨率调整）
-half_width = 50;
-range_idx = max(1, center_idx-half_width) : min(length(R_lfm), center_idx+half_width);
-
-% 时间轴（微秒）
+half_width = 60;
+range_idx = max(1, idx_peak-half_width) : min(length(R_lfm), idx_peak+half_width);
 t_corr = lag / fs * 1e6;
 
-plot(t_corr(range_idx), R_lfm(range_idx), 'k-', 'LineWidth', 1.5); hold on;
-plot(t_corr(range_idx), R_hamming(range_idx), 'r--', 'LineWidth', 1.5);
-plot(t_corr(range_idx), R_opt(range_idx), 'b-.', 'LineWidth', 1.5);
+plot(t_corr(range_idx), R_lfm(range_idx), 'k-', 'LineWidth', 1.2); hold on;
+plot(t_corr(range_idx), R_opt(range_idx), 'g-', 'LineWidth', 1.6);
+plot(t_corr(range_idx), R_hamming(range_idx), 'r--', 'LineWidth', 1.2);
+plot(t_corr(range_idx), R_kaiser(range_idx), 'b-.', 'LineWidth', 1.2);
+plot(t_corr(range_idx), R_taylor(range_idx), 'm:', 'LineWidth', 1.4);
+plot(t_corr(range_idx), R_cheb(range_idx), 'c--', 'LineWidth', 1.2);
 xlabel('时延 (μs)'); ylabel('归一化幅度');
 title('自相关主瓣区域');
-legend('原始 LFM', 'Hamming 加窗', '优化勒让德窗', 'Location', 'best');
+legend('原始 LFM','优化勒让德窗','Hamming','Kaiser','Taylor','Chebyshev','Location','best');
 grid on;
 
+%% ========================================================================
+%  图3：频域窗函数对比图（dB）
+% =========================================================================
 figure(3);
 f_MHz = f / 1e6;
-W_opt_centered = fftshift(W_opt);
-W_hamming_centered = fftshift(W_hamming);
-plot(f_MHz, 20*log10(abs(W_opt_centered)+eps), 'g-', 'LineWidth', 1.5); hold on;
-plot(f_MHz, 20*log10(abs(W_hamming_centered)+eps), 'r--', 'LineWidth', 1.5);
+plot(f_MHz, 20*log10(abs(fftshift(W_opt))+eps), 'g-', 'LineWidth', 1.6); hold on;
+plot(f_MHz, 20*log10(abs(fftshift(W_hamming))+eps), 'r--', 'LineWidth', 1.2);
+plot(f_MHz, 20*log10(abs(fftshift(W_kaiser))+eps), 'b-.', 'LineWidth', 1.2);
+plot(f_MHz, 20*log10(abs(fftshift(W_taylor))+eps), 'm:', 'LineWidth', 1.4);
+plot(f_MHz, 20*log10(abs(fftshift(W_cheb))+eps), 'c--', 'LineWidth', 1.2);
 xlabel('Frequency (MHz)'); ylabel('Magnitude (dB)');
 title('Frequency Domain Window Functions (dB)');
-legend('Optimized Legendre Window', 'Hamming Window');
+legend('Proposed (Legendre)','Hamming','Kaiser','Taylor','Chebyshev','Location','best');
 grid on;
 xlim([-B/2/1e6, B/2/1e6]);
-ylim([-60, 5]);  % 根据窗函数动态调整
+ylim([-80, 5]);
 
 %% ========================================================================
 %  扩展实验补充（按当前 test.m 参数体系）
@@ -592,88 +598,14 @@ function cfg = build_ext_config(B, T, fs, dim, lb, ub, nFireflies, maxIter, nRes
 end
 
 function run_extended_experiments(cfg)
-    fprintf('\n=================== 论文补充实验（我方窗函数中心） ===================\n');
-    fprintf('复现实验细节：B=%.1f MHz, T=%.2f us, fs=%.1f MHz, TBP=%.1f\n', cfg.B/1e6, cfg.T*1e6, cfg.fs/1e6, cfg.B*cfg.T);
-    fprintf('窗长度=带宽内采样点数；脉冲压缩=xcorr 自相关；PSLR=首零点口径，MW=-3 dB口径。\n');
-    fprintf('说明：所有指标计算均调用原函数（compute_metrics_single/evaluate_metrics/compute_PSLR/compute_constraints_v2）。\n');
-
+    fprintf('\n=================== 扩展分析：收敛与参数敏感性 ===================\n');
     [s0, f0] = build_lfm_ext(cfg.B, cfg.T, cfg.fs);
-    N0 = length(s0);
-    t_corr = (-(N0-1):(N0-1))' / cfg.fs * 1e6;
 
-    names = {'Proposed', 'Hamming', 'Kaiser', 'Taylor', 'Chebyshev'};
-    n_case = numel(names);
-    windows_fft = zeros(N0, n_case);
-    signals = zeros(N0, n_case);
-    metrics = zeros(n_case, 3); % PSLR, MW, PAPR
-    auto_corr = zeros(2*N0-1, n_case);
-
-    % 我方优化窗 + 收敛曲线
+    % 收敛曲线（FA 与 FA+精修）
     [b_prop, fa_hist] = run_fa_core_ext(cfg, s0, f0, cfg.B);
-    [b_refined, refine_hist, refine_info] = refine_or_keep_ext(cfg, b_prop, s0, cfg.fs, cfg.B);
-    if refine_info.accepted
-        b_prop = b_refined;
-    end
-    windows_fft(:,1) = legendre_window(b_prop, cfg.fs, cfg.B, N0);
+    [~, refine_hist, refine_info] = refine_or_keep_ext(cfg, b_prop, s0, cfg.fs, cfg.B);
 
-    % 传统窗（固定对照）
-    for i = 2:n_case
-        windows_fft(:,i) = build_reference_window_ext(names{i}, f0, cfg.B, N0);
-    end
-
-    % 指标计算（使用原函数）
-    for i = 1:n_case
-        signals(:,i) = ifft(fft(s0) .* windows_fft(:,i));
-        [R, lag] = xcorr(signals(:,i));
-        auto_corr(:,i) = safe_normalize(abs(R));
-        metrics(i,:) = compute_metrics_single(auto_corr(:,i), lag, signals(:,i));
-    end
-
-    % 输出绝对指标表（不输出差值）
-    fprintf('\n=================== 指标对比表（绝对值） ===================\n');
-    fprintf('窗函数\t\t\tPSLR(dB)\tMW(-3dB)\t\tPAPR\n');
-    for i = 1:n_case
-        fprintf('%-12s\t%.2f\t\t%.2e\t%.3f\n', names{i}, metrics(i,1), metrics(i,2), metrics(i,3));
-    end
-    fprintf('===========================================================\n');
-
-    % 图1：频域窗函数对比（dB）
-    figure('Name','论文补充-频域窗函数对比');
-    f_MHz = f0 / 1e6;
-    style = {'k-','r--','b-.','m:','g-'};
-    for i = 1:n_case
-        plot(f_MHz, 20*log10(abs(fftshift(windows_fft(:,i))) + eps), style{i}, 'LineWidth', 1.5); hold on;
-    end
-    xlabel('Frequency (MHz)'); ylabel('Magnitude (dB)');
-    title('Frequency-domain Window Comparison');
-    legend(names, 'Location', 'best');
-    grid on; xlim([-cfg.B/2/1e6, cfg.B/2/1e6]); ylim([-80, 5]);
-
-    % 图2：自相关函数对比（dB）
-    figure('Name','论文补充-自相关函数对比');
-    for i = 1:n_case
-        plot(t_corr, 20*log10(auto_corr(:,i) + eps), style{i}, 'LineWidth', 1.5); hold on;
-    end
-    xlabel('Time (\mus)'); ylabel('Normalized Magnitude (dB)');
-    title('Pulse-compression Autocorrelation Comparison');
-    legend(names, 'Location', 'best');
-    grid on; xlim([-0.5 0.5]); ylim([-80 5]);
-
-    % 图3：自相关主瓣对比（线性）
-    figure('Name','论文补充-自相关主瓣对比');
-    [~, idx_peak] = max(auto_corr(:,1));
-    half_width = 60;
-    range_idx = max(1, idx_peak-half_width) : min(length(t_corr), idx_peak+half_width);
-    for i = 1:n_case
-        plot(t_corr(range_idx), auto_corr(range_idx,i), style{i}, 'LineWidth', 1.5); hold on;
-    end
-    xlabel('时延 (\mus)'); ylabel('归一化幅度');
-    title('Autocorrelation Mainlobe Comparison');
-    legend(names, 'Location', 'best');
-    grid on;
-
-    % 图4：收敛曲线（FA 与 FA+精修）
-    figure('Name','论文补充-收敛曲线');
+    figure('Name','收敛曲线：FA vs FA+精修');
     plot(fa_hist, 'k-', 'LineWidth', 1.5); hold on;
     plot(refine_hist, 'r--', 'LineWidth', 1.5);
     xlabel('Iteration'); ylabel('Objective (PSLR-like)');
@@ -682,16 +614,37 @@ function run_extended_experiments(cfg)
     grid on;
     fprintf('收敛信息：FA终值=%.3f, FA+精修终值=%.3f, 精修是否接受=%d\n', fa_hist(end), refine_hist(end), refine_info.accepted);
 
-    % 参数敏感性（保留）
-    fprintf('\n=================== 参数敏感性（相对默认配置） ===================\n');
-    [pslr_def, mw_def, papr_def] = evaluate_metrics(b_prop, s0, cfg.fs, cfg.B);
-    fprintf('默认配置(我方窗): PSLR=%.2f, MW=%.2e, PAPR=%.3f\n', pslr_def, mw_def, papr_def);
-    sensitivity_sweep_ext(cfg, s0, f0, 'alpha', [0.05 0.1 0.2 0.35], [pslr_def, mw_def, papr_def]);
-    sensitivity_sweep_ext(cfg, s0, f0, 'gamma', [0.5 1.0 1.8], [pslr_def, mw_def, papr_def]);
-    sensitivity_sweep_ext(cfg, s0, f0, 'lambda_PSLR', [40 80 120], [pslr_def, mw_def, papr_def]);
-    sensitivity_sweep_ext(cfg, s0, f0, 'lambda_MW', [4 7 10], [pslr_def, mw_def, papr_def]);
-    sensitivity_sweep_ext(cfg, s0, f0, 'lambda_PAPR', [5 8 11], [pslr_def, mw_def, papr_def]);
-    sensitivity_sweep_ext(cfg, s0, f0, 'PSLR_margin', [0.4 0.8 1.2 1.6], [pslr_def, mw_def, papr_def]);
+    % 参数敏感性（图表述，计算指标沿用 compute_metrics_single）
+    [pslr_def, mw_def, papr_def] = eval_metrics_by_b_ext(b_prop, s0, cfg.fs, cfg.B);
+    base_metric = [pslr_def, mw_def, papr_def];
+
+    sweeps = {
+        'alpha', [0.05 0.1 0.2 0.35];
+        'gamma', [0.5 1.0 1.8];
+        'lambda_PSLR', [40 80 120];
+        'lambda_MW', [4 7 10];
+        'lambda_PAPR', [5 8 11];
+        'PSLR_margin', [0.4 0.8 1.2 1.6]
+    };
+
+    figure('Name','参数敏感性分析');
+    tl = tiledlayout(2,3, 'Padding','compact','TileSpacing','compact');
+    title(tl, 'Parameter Sensitivity (relative to default)');
+
+    for i = 1:size(sweeps,1)
+        field_name = sweeps{i,1};
+        vals = sweeps{i,2};
+        [d_pslr, d_mw, d_papr] = sensitivity_sweep_ext(cfg, s0, f0, field_name, vals, base_metric);
+        nexttile;
+        plot(vals, d_pslr, 'k-o', 'LineWidth', 1.2); hold on;
+        plot(vals, d_mw, 'b-s', 'LineWidth', 1.2);
+        plot(vals, d_papr, 'r-^', 'LineWidth', 1.2);
+        xlabel(field_name);
+        ylabel('\Delta metric');
+        title(field_name);
+        legend('\DeltaPSLR','\DeltaMW','\DeltaPAPR','Location','best');
+        grid on;
+    end
 end
 
 function [b_best, best_hist] = run_fa_core_ext(cfg, s_LFM, f, B)
@@ -799,20 +752,30 @@ function W = build_reference_window_ext(name, f, B, N)
     Wc = zeros(N,1); Wc(idx_band) = w; Wc = Wc/(max(Wc)+eps); W = ifftshift(Wc);
 end
 
-function sensitivity_sweep_ext(cfg, s0, f0, field_name, vals, base_metric)
-    fprintf('%s 扫描: ', field_name);
+function [d_pslr, d_mw, d_papr] = sensitivity_sweep_ext(cfg, s0, f0, field_name, vals, base_metric)
+    d_pslr = zeros(size(vals));
+    d_mw = zeros(size(vals));
+    d_papr = zeros(size(vals));
     for i = 1:numel(vals)
         cfg_i = cfg;
         cfg_i.(field_name) = vals(i);
         [b, ~] = run_fa_core_ext(cfg_i, s0, f0, cfg_i.B);
-        [pslr, mw, papr] = evaluate_metrics(b, s0, cfg_i.fs, cfg_i.B);
-        dpslr = pslr - base_metric(1);
-        dmw = mw - base_metric(2);
-        dpapr = papr - base_metric(3);
-        fprintf('[%.2f: ΔPSLR=%+.2f, ΔMW=%+.2e, ΔPAPR=%+.3f] ', vals(i), dpslr, dmw, dpapr);
+        [pslr, mw, papr] = eval_metrics_by_b_ext(b, s0, cfg_i.fs, cfg_i.B);
+        d_pslr(i) = pslr - base_metric(1);
+        d_mw(i) = mw - base_metric(2);
+        d_papr(i) = papr - base_metric(3);
     end
-    fprintf('\n');
 end
+
+function [pslr, mw, papr] = eval_metrics_by_b_ext(b, s_LFM, fs, B)
+    N = length(s_LFM);
+    W = legendre_window(b, fs, B, N);
+    s_w = ifft(fft(s_LFM) .* W);
+    [R, lag] = xcorr(s_w);
+    R = safe_normalize(abs(R));
+    [pslr, mw, papr] = compute_metrics_single(R, lag, s_w);
+end
+
 function [s, f] = build_lfm_ext(B, T, fs)
     N = round(T * fs);
     t = (-N/2:N/2-1)' / fs;
