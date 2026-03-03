@@ -350,6 +350,13 @@ legend('Optimized Legendre Window', 'Hamming Window');
 grid on;
 xlim([-B/2/1e6, B/2/1e6]);
 ylim([-60, 5]);  % 根据窗函数动态调整
+
+%% ========================================================================
+%  扩展实验补充（按当前 test.m 参数体系）
+% =========================================================================
+ext_cfg = build_ext_config(B, T, fs, dim, lb, ub, nFireflies, maxIter, nRestarts, ...
+    gamma, beta0, alpha, lambda_MW, lambda_PAPR, lambda_PSLR, MW_target, PAPR_target, PSLR_margin, PSLR_floor);
+run_extended_experiments(ext_cfg);
 %% ========================================================================
 %  函数定义
 %% ========================================================================
@@ -557,4 +564,240 @@ end
 function islr = compute_ISLR(varargin)
 % 兼容占位：历史版本可能仍引用此函数，当前流程已不使用 ISLR
     islr = 0;
+end
+
+
+function cfg = build_ext_config(B, T, fs, dim, lb, ub, nFireflies, maxIter, nRestarts, gamma, beta0, alpha, lambda_MW, lambda_PAPR, lambda_PSLR, MW_target, PAPR_target, PSLR_margin, PSLR_floor)
+    cfg.B = B;
+    cfg.T = T;
+    cfg.fs = fs;
+    cfg.dim = dim;
+    cfg.lb = lb;
+    cfg.ub = ub;
+    cfg.nFireflies = min(nFireflies, 18);
+    cfg.maxIter = min(maxIter, 60);
+    cfg.nRestarts = min(nRestarts, 2);
+    cfg.gamma = gamma;
+    cfg.beta0 = beta0;
+    cfg.alpha = alpha;
+    cfg.lambda_MW = lambda_MW;
+    cfg.lambda_PAPR = lambda_PAPR;
+    cfg.lambda_PSLR = lambda_PSLR;
+    cfg.MW_target = MW_target;
+    cfg.PAPR_target = PAPR_target;
+    cfg.PSLR_margin = PSLR_margin;
+    cfg.PSLR_floor = PSLR_floor;
+    cfg.nRuns = 6;
+    cfg.base_seed = 100;
+end
+
+function run_extended_experiments(cfg)
+    fprintf('\n=================== 扩展实验补充 ===================\n');
+    fprintf('复现实验细节：B=%.1f MHz, T=%.2f us, fs=%.1f MHz, TBP=%.1f\n', cfg.B/1e6, cfg.T*1e6, cfg.fs/1e6, cfg.B*cfg.T);
+    fprintf('窗长度=带宽内采样点数；脉冲压缩=xcorr 自相关；PSLR=首零点口径，MW=-3 dB口径。\n');
+
+    [s0, f0] = build_lfm_ext(cfg.B, cfg.T, cfg.fs);
+    N0 = length(s0);
+
+    % 1) 对比窗：Hamming/Kaiser/Taylor/Chebyshev
+    win_names = {'Hamming','Kaiser','Taylor','Chebyshev'};
+    fprintf('\n[1] 窗函数对比\n');
+    fprintf('Window\t\tPSLR(dB)\tMW\t\tPAPR\n');
+    for i = 1:numel(win_names)
+        W = build_reference_window_ext(win_names{i}, f0, cfg.B, N0);
+        sw = ifft(fft(s0) .* W);
+        [R, lag] = xcorr(sw);
+        [pslr, mw, papr] = compute_metrics_single(safe_normalize(abs(R)), lag, sw);
+        fprintf('%-10s\t%.2f\t\t%.2e\t%.3f\n', win_names{i}, pslr, mw, papr);
+    end
+
+    % 2)+3) 多次随机运行统计 + 收敛/时间
+    fprintf('\n[2-3] Monte Carlo 统计与收敛时间\n');
+    pslr_fa = zeros(cfg.nRuns,1); mw_fa = zeros(cfg.nRuns,1); papr_fa = zeros(cfg.nRuns,1);
+    pslr_rf = zeros(cfg.nRuns,1); mw_rf = zeros(cfg.nRuns,1); papr_rf = zeros(cfg.nRuns,1);
+    t_fa = zeros(cfg.nRuns,1); t_rf = zeros(cfg.nRuns,1);
+    hist_fa = zeros(cfg.maxIter,1);
+    hist_rf = zeros(cfg.maxIter,1);
+    for r = 1:cfg.nRuns
+        rng(cfg.base_seed + r);
+        [s, f] = build_lfm_ext(cfg.B, cfg.T, cfg.fs);
+        tic;
+        [b_fa, one_hist] = run_fa_core_ext(cfg, s, f, cfg.B);
+        t_fa(r) = toc;
+        [pslr_fa(r), mw_fa(r), papr_fa(r)] = evaluate_metrics(b_fa, s, cfg.fs, cfg.B);
+
+        tic;
+        [b_rf, rf_hist] = refine_or_keep_ext(cfg, b_fa, s, cfg.fs, cfg.B);
+        t_rf(r) = t_fa(r) + toc;
+        [pslr_rf(r), mw_rf(r), papr_rf(r)] = evaluate_metrics(b_rf, s, cfg.fs, cfg.B);
+
+        hist_fa = hist_fa + one_hist(:);
+        hist_rf = hist_rf + rf_hist(:);
+    end
+    hist_fa = hist_fa / cfg.nRuns;
+    hist_rf = hist_rf / cfg.nRuns;
+
+    fprintf('FA: PSLR=%.2f±%.2f, MW=%.2e±%.2e, PAPR=%.3f±%.3f\n', mean(pslr_fa), var(pslr_fa), mean(mw_fa), var(mw_fa), mean(papr_fa), var(papr_fa));
+    fprintf('FA+精修: PSLR=%.2f±%.2f, MW=%.2e±%.2e, PAPR=%.3f±%.3f\n', mean(pslr_rf), var(pslr_rf), mean(mw_rf), var(mw_rf), mean(papr_rf), var(papr_rf));
+    fprintf('平均运行时间(s): FA=%.3f, FA+精修=%.3f\n', mean(t_fa), mean(t_rf));
+    fprintf('复杂度估计: O(nRuns*nRestarts*maxIter*nFireflies^2*eval_cost)。\n');
+
+    figure('Name','扩展实验收敛曲线');
+    plot(hist_fa,'LineWidth',1.5); hold on;
+    plot(hist_rf,'LineWidth',1.5);
+    legend('FA 单独','FA+精修','Location','best');
+    xlabel('Iteration'); ylabel('Fitness'); grid on;
+    title('平均收敛曲线');
+
+    % 4) 参数敏感性
+    fprintf('\n[4] 参数敏感性趋势\n');
+    alpha_list = [0.05 0.1 0.2 0.35];
+    gamma_list = [0.5 1.0 1.8];
+    lambda_list = [40 80 120];
+    margin_list = [0.4 0.8 1.2 1.6];
+    fprintf('alpha: '); sweep_and_print_ext(cfg, s0, f0, 'alpha', alpha_list);
+    fprintf('gamma: '); sweep_and_print_ext(cfg, s0, f0, 'gamma', gamma_list);
+    fprintf('lambda_PSLR: '); sweep_and_print_ext(cfg, s0, f0, 'lambda_PSLR', lambda_list);
+    fprintf('PSLR_margin: '); sweep_and_print_ext(cfg, s0, f0, 'PSLR_margin', margin_list);
+
+    % 5) 场景变化：TBP/N/SNR
+    fprintf('\n[5] 场景变化（TBP/N/SNR）\n');
+    scenarios = [400e6,1.5e-6,600e6,20; 600e6,1.7e-6,720e6,10; 900e6,1.0e-6,1200e6,0];
+    fprintf('B(MHz)\tT(us)\tfs(MHz)\tN\tTBP\tSNR\tPSLR\tMW\tPAPR\n');
+    for i = 1:size(scenarios,1)
+        B = scenarios(i,1); T = scenarios(i,2); fs = scenarios(i,3); snr_db = scenarios(i,4);
+        [s_scene, f_scene] = build_lfm_ext(B, T, fs);
+        s_scene = add_awgn_ext(s_scene, snr_db);
+        cfg_scene = cfg; cfg_scene.B = B; cfg_scene.T = T; cfg_scene.fs = fs;
+        [b_scene, ~] = run_fa_core_ext(cfg_scene, s_scene, f_scene, B);
+        [pslr, mw, papr] = evaluate_metrics(b_scene, s_scene, fs, B);
+        fprintf('%.0f\t%.2f\t%.0f\t%d\t%.1f\t%.0f\t%.2f\t%.2e\t%.2f\n', B/1e6, T*1e6, fs/1e6, length(s_scene), B*T, snr_db, pslr, mw, papr);
+    end
+end
+
+function [b_best, best_hist] = run_fa_core_ext(cfg, s_LFM, f, B)
+    N = length(s_LFM);
+    idx_band = abs(f) <= B/2;
+    W_hc = zeros(N,1); W_hc(idx_band) = hamming(sum(idx_band)); W_hc = W_hc/(max(W_hc)+eps);
+    s_h = ifft(fft(s_LFM).*ifftshift(W_hc));
+    [R_h, lag_h] = xcorr(s_h);
+    [PSLR_h,~,~] = compute_metrics_single(safe_normalize(abs(R_h)), lag_h, s_h);
+    PSLR_target = PSLR_h - cfg.PSLR_margin;
+
+    best_fit = inf; b_best = zeros(1,cfg.dim); best_hist = 1e3*ones(cfg.maxIter,1);
+    for rr = 1:cfg.nRestarts
+        fireflies = cfg.lb + (cfg.ub-cfg.lb).*rand(cfg.nFireflies,cfg.dim);
+        fit = zeros(cfg.nFireflies,1);
+        for i = 1:cfg.nFireflies
+            fit(i) = fitness_func(fireflies(i,:), s_LFM, cfg.fs, B, cfg.lambda_MW, cfg.lambda_PAPR, cfg.lambda_PSLR, cfg.MW_target, cfg.PAPR_target, PSLR_target, cfg.PSLR_floor);
+        end
+        hist = zeros(cfg.maxIter,1);
+        for iter = 1:cfg.maxIter
+            [fit, idx] = sort(fit); fireflies = fireflies(idx,:);
+            for i = 1:cfg.nFireflies
+                for j = 1:cfg.nFireflies
+                    if fit(j) < fit(i)
+                        r = norm(fireflies(i,:)-fireflies(j,:));
+                        beta = cfg.beta0 * exp(-cfg.gamma * r^2);
+                        fireflies(i,:) = fireflies(i,:) + beta*(fireflies(j,:)-fireflies(i,:)) + cfg.alpha*(rand(1,cfg.dim)-0.5).*(cfg.ub-cfg.lb);
+                        fireflies(i,:) = max(min(fireflies(i,:), cfg.ub), cfg.lb);
+                        fit(i) = fitness_func(fireflies(i,:), s_LFM, cfg.fs, B, cfg.lambda_MW, cfg.lambda_PAPR, cfg.lambda_PSLR, cfg.MW_target, cfg.PAPR_target, PSLR_target, cfg.PSLR_floor);
+                    end
+                end
+            end
+            hist(iter) = min(fit);
+        end
+        if min(fit) < best_fit
+            [fit, idx] = sort(fit); fireflies = fireflies(idx,:);
+            best_fit = fit(1); b_best = fireflies(1,:); best_hist = hist;
+        end
+    end
+end
+
+function [b_out, hist] = refine_or_keep_ext(cfg, b_in, s_LFM, fs, B)
+    b_out = b_in;
+    hist = nan(cfg.maxIter,1);
+    hist(:) = compute_PSLR(b_in, s_LFM, fs, B);
+    if exist('fmincon','file') ~= 2
+        return;
+    end
+    [R_l, lag_l] = xcorr(s_LFM);
+    [~, MW_lfm, PAPR_lfm] = compute_metrics_single(safe_normalize(abs(R_l)), lag_l, s_LFM);
+
+    N = length(s_LFM);
+    f = (-N/2:N/2-1)' * (fs/N);
+    idx_band = abs(f) <= B/2;
+    W_hc = zeros(N,1); W_hc(idx_band) = hamming(sum(idx_band)); W_hc = W_hc/(max(W_hc)+eps);
+    s_h = ifft(fft(s_LFM).*ifftshift(W_hc));
+    [R_h, lag_h] = xcorr(s_h);
+    [PSLR_h, MW_h, PAPR_h] = compute_metrics_single(safe_normalize(abs(R_h)), lag_h, s_h);
+
+    MW_target = MW_h / max(MW_lfm,eps) + 0.2;
+    PAPR_target = PAPR_h / max(PAPR_lfm,eps) + 0.2;
+    pslr_before = compute_PSLR(b_in, s_LFM, fs, B);
+    obj_fun = @(b) compute_PSLR(b, s_LFM, fs, B);
+    options = optimoptions('fmincon','Display','off','Algorithm','interior-point','MaxFunctionEvaluations',1200);
+
+    for attempt = 1:4
+        pslr_target = PSLR_h - max(0,cfg.PSLR_margin - 0.2*(attempt-1));
+        nonlcon = @(b) compute_constraints_v2(b, s_LFM, fs, B, MW_target, PAPR_target, pslr_target, MW_lfm, PAPR_lfm);
+        [b_try, fval, ef] = fmincon(obj_fun, b_out, [], [], [], [], cfg.lb, cfg.ub, nonlcon, options);
+        [c_try, ~] = nonlcon(b_try);
+        if ef > 0 && all(c_try <= 1e-6) && fval <= pslr_before
+            b_out = b_try;
+            hist = linspace(pslr_before, fval, cfg.maxIter)';
+            return;
+        end
+    end
+end
+
+function W = build_reference_window_ext(name, f, B, N)
+    idx_band = abs(f) <= B/2;
+    N_band = sum(idx_band);
+    switch lower(name)
+        case 'hamming'
+            w = hamming(N_band);
+        case 'kaiser'
+            w = kaiser(N_band, 6);
+        case 'taylor'
+            if exist('taylorwin','file') == 2
+                w = taylorwin(N_band, 4, -35);
+            else
+                w = kaiser(N_band, 5);
+            end
+        case 'chebyshev'
+            if exist('chebwin','file') == 2
+                w = chebwin(N_band, 60);
+            else
+                w = kaiser(N_band, 7);
+            end
+        otherwise
+            w = hamming(N_band);
+    end
+    Wc = zeros(N,1); Wc(idx_band) = w; Wc = Wc/(max(Wc)+eps); W = ifftshift(Wc);
+end
+
+function sweep_and_print_ext(cfg, s0, f0, field_name, vals)
+    for i = 1:numel(vals)
+        cfg_i = cfg;
+        cfg_i.(field_name) = vals(i);
+        [b, ~] = run_fa_core_ext(cfg_i, s0, f0, cfg_i.B);
+        [pslr, mw, papr] = evaluate_metrics(b, s0, cfg_i.fs, cfg_i.B);
+        fprintf('[%s=%.2f: PSLR=%.2f, MW=%.2e, PAPR=%.2f] ', field_name, vals(i), pslr, mw, papr);
+    end
+    fprintf('\n');
+end
+
+function [s, f] = build_lfm_ext(B, T, fs)
+    N = round(T * fs);
+    t = (-N/2:N/2-1)' / fs;
+    f = (-N/2:N/2-1)' * (fs/N);
+    s = exp(1j * pi * (B/T) * t.^2);
+end
+
+function s_noisy = add_awgn_ext(s, snr_db)
+    p = mean(abs(s).^2);
+    nvar = p / max(10^(snr_db/10), eps);
+    n = sqrt(nvar/2) * (randn(size(s)) + 1j*randn(size(s)));
+    s_noisy = s + n;
 end
