@@ -595,144 +595,80 @@ function run_extended_experiments(cfg)
     fprintf('\n=================== 论文补充实验（我方窗函数中心） ===================\n');
     fprintf('复现实验细节：B=%.1f MHz, T=%.2f us, fs=%.1f MHz, TBP=%.1f\n', cfg.B/1e6, cfg.T*1e6, cfg.fs/1e6, cfg.B*cfg.T);
     fprintf('窗长度=带宽内采样点数；脉冲压缩=xcorr 自相关；PSLR=首零点口径，MW=-3 dB口径。\n');
-    fprintf('说明：Hamming/Kaiser/Taylor/Chebyshev 仅作为固定对照组，不参与我方窗优化。\n');
+    fprintf('说明：下表和图仅展示绝对指标，传统窗函数作为固定对照组。\n');
 
     [s0, f0] = build_lfm_ext(cfg.B, cfg.T, cfg.fs);
     N0 = length(s0);
+    t_corr = (-(N0-1):(N0-1))' / cfg.fs * 1e6;
 
-    % 1) 我方窗对照结果（我方主导，基线仅参照）
-    fprintf('\n[1] 我方窗对照结果（Proposed vs Baselines）\n');
+    names = {'Proposed', 'Hamming', 'Kaiser', 'Taylor', 'Chebyshev'};
+    n_case = numel(names);
+    windows_fft = zeros(N0, n_case);
+    signals = zeros(N0, n_case);
+    metrics = zeros(n_case, 3); % PSLR, MW, PAPR
+    auto_corr = zeros(2*N0-1, n_case);
+
+    % 我方优化窗
     [b_prop, ~] = run_fa_core_ext(cfg, s0, f0, cfg.B);
-    [pslr_p, mw_p, papr_p] = evaluate_metrics(b_prop, s0, cfg.fs, cfg.B);
-    fprintf('Proposed(我方窗): PSLR=%.2f dB, MW=%.2e, PAPR=%.3f\n', pslr_p, mw_p, papr_p);
+    windows_fft(:,1) = legendre_window(b_prop, cfg.fs, cfg.B, N0);
 
-    names = {'Hamming','Kaiser','Taylor','Chebyshev'};
-    base_metrics = zeros(numel(names), 3);
-    for i = 1:numel(names)
-        W = build_reference_window_ext(names{i}, f0, cfg.B, N0);
-        sw = ifft(fft(s0) .* W);
-        [R, lag] = xcorr(sw);
-        base_metrics(i,:) = compute_metrics_single(safe_normalize(abs(R)), lag, sw);
-    end
-    fprintf('相对对照增益(我方-对照): ΔPSLR(dB)	ΔMW		ΔPAPR\n');
-    for i = 1:numel(names)
-        dpslr = pslr_p - base_metrics(i,1);
-        dmw = mw_p - base_metrics(i,2);
-        dpapr = papr_p - base_metrics(i,3);
-        fprintf('vs %-10s: %+.2f		%+.2e	%+.3f\n', names{i}, dpslr, dmw, dpapr);
+    % 传统窗（固定对照）
+    for i = 2:n_case
+        windows_fft(:,i) = build_reference_window_ext(names{i}, f0, cfg.B, N0);
     end
 
-    % 2)+3) 多次随机稳定性、收敛收益与代价
-    fprintf('\n[2-3] 我方窗稳定性 + 收敛收益/代价\n');
-    pslr_fa = zeros(cfg.nRuns,1); mw_fa = zeros(cfg.nRuns,1); papr_fa = zeros(cfg.nRuns,1);
-    pslr_rf = zeros(cfg.nRuns,1); mw_rf = zeros(cfg.nRuns,1); papr_rf = zeros(cfg.nRuns,1);
-    t_fa = zeros(cfg.nRuns,1); t_total = zeros(cfg.nRuns,1);
-    refine_gain = zeros(cfg.nRuns,1); refine_ok = zeros(cfg.nRuns,1); extra_t = zeros(cfg.nRuns,1);
-    delta_vs = struct();
-    for i = 1:numel(names)
-        delta_vs(i).dpslr = zeros(cfg.nRuns,1);
-        delta_vs(i).dmw = zeros(cfg.nRuns,1);
-        delta_vs(i).dpapr = zeros(cfg.nRuns,1);
-    end
-    hist_fa = zeros(cfg.maxIter,1); hist_rf = zeros(cfg.maxIter,1);
-
-    for r = 1:cfg.nRuns
-        rng(cfg.base_seed + r);
-        [s, f] = build_lfm_ext(cfg.B, cfg.T, cfg.fs);
-        tic;
-        [b_fa, one_hist] = run_fa_core_ext(cfg, s, f, cfg.B);
-        t_fa(r) = toc;
-        [pslr_fa(r), mw_fa(r), papr_fa(r)] = evaluate_metrics(b_fa, s, cfg.fs, cfg.B);
-
-        tic;
-        [b_rf, rf_hist, info_rf] = refine_or_keep_ext(cfg, b_fa, s, cfg.fs, cfg.B);
-        extra_t(r) = toc;
-        t_total(r) = t_fa(r) + extra_t(r);
-        refine_gain(r) = info_rf.pslr_gain;
-        refine_ok(r) = info_rf.accepted;
-        [pslr_rf(r), mw_rf(r), papr_rf(r)] = evaluate_metrics(b_rf, s, cfg.fs, cfg.B);
-
-        N = length(s);
-        for i = 1:numel(names)
-            Wb = build_reference_window_ext(names{i}, f, cfg.B, N);
-            sb = ifft(fft(s) .* Wb);
-            [Rb, lagb] = xcorr(sb);
-            mb = compute_metrics_single(safe_normalize(abs(Rb)), lagb, sb);
-            delta_vs(i).dpslr(r) = pslr_rf(r) - mb(1);
-            delta_vs(i).dmw(r) = mw_rf(r) - mb(2);
-            delta_vs(i).dpapr(r) = papr_rf(r) - mb(3);
-        end
-
-        hist_fa = hist_fa + one_hist(:);
-        hist_rf = hist_rf + rf_hist(:);
-    end
-    hist_fa = hist_fa / cfg.nRuns;
-    hist_rf = hist_rf / cfg.nRuns;
-
-    fprintf('我方窗(FA)稳定性: PSLR=%.2f±%.2f(var), MW=%.2e±%.2e(var), PAPR=%.3f±%.3f(var)\n', mean(pslr_fa), var(pslr_fa), mean(mw_fa), var(mw_fa), mean(papr_fa), var(papr_fa));
-    fprintf('我方窗(FA+精修)稳定性: PSLR=%.2f±%.2f(var), MW=%.2e±%.2e(var), PAPR=%.3f±%.3f(var)\n', mean(pslr_rf), var(pslr_rf), mean(mw_rf), var(mw_rf), mean(papr_rf), var(papr_rf));
-    for i = 1:numel(names)
-        fprintf('相对%-10s增益: ΔPSLR=%.2f±%.2f(var), ΔMW=%.2e±%.2e(var), ΔPAPR=%.3f±%.3f(var)\n', ...
-            names{i}, mean(delta_vs(i).dpslr), var(delta_vs(i).dpslr), mean(delta_vs(i).dmw), var(delta_vs(i).dmw), mean(delta_vs(i).dpapr), var(delta_vs(i).dpapr));
+    % 指标计算
+    for i = 1:n_case
+        signals(:,i) = ifft(fft(s0) .* windows_fft(:,i));
+        [R, lag] = xcorr(signals(:,i));
+        auto_corr(:,i) = safe_normalize(abs(R));
+        metrics(i,:) = compute_metrics_single(auto_corr(:,i), lag, signals(:,i));
     end
 
-    success_rate = mean(refine_ok) * 100;
-    mean_gain = mean(refine_gain(refine_ok>0));
-    if isempty(mean_gain) || ~isfinite(mean_gain)
-        mean_gain = 0;
+    % 输出绝对指标表（不输出差值）
+    fprintf('\n=================== 指标对比表（绝对值） ===================\n');
+    fprintf('窗函数\t\t\tPSLR(dB)\tMW(-3dB)\t\tPAPR\n');
+    for i = 1:n_case
+        fprintf('%-12s\t%.2f\t\t%.2e\t%.3f\n', names{i}, metrics(i,1), metrics(i,2), metrics(i,3));
     end
-    sec_per_db = mean(extra_t) / max(mean_gain, eps);
-    fprintf('精修收益: 平均PSLR增益=%.3f dB, 成功率=%.1f%%, 平均额外耗时=%.3f s, 单位提升代价=%.3f s/dB\n', ...
-        mean(refine_gain), success_rate, mean(extra_t), sec_per_db);
-    fprintf('总耗时统计: FA=%.3f s, FA+精修=%.3f s\n', mean(t_fa), mean(t_total));
-    fprintf('复杂度估计: O(nRuns*nRestarts*maxIter*nFireflies^2*eval_cost)。\n');
+    fprintf('===========================================================\n');
 
-    figure('Name','扩展实验收敛曲线');
-    plot(hist_fa,'LineWidth',1.5); hold on;
-    plot(hist_rf,'LineWidth',1.5);
-    legend('FA 单独','FA+精修','Location','best');
-    xlabel('Iteration'); ylabel('Fitness'); grid on;
-    title('我方窗参数优化平均收敛曲线');
-
-    % 4) 参数敏感性（对默认配置的变化量）
-    fprintf('\n[4] 参数敏感性（相对默认配置）\n');
-    [b_def, ~] = run_fa_core_ext(cfg, s0, f0, cfg.B);
-    [pslr_def, mw_def, papr_def] = evaluate_metrics(b_def, s0, cfg.fs, cfg.B);
-    fprintf('默认配置: PSLR=%.2f, MW=%.2e, PAPR=%.3f\n', pslr_def, mw_def, papr_def);
-
-    sensitivity_sweep_ext(cfg, s0, f0, 'alpha', [0.05 0.1 0.2 0.35], [pslr_def,mw_def,papr_def]);
-    sensitivity_sweep_ext(cfg, s0, f0, 'gamma', [0.5 1.0 1.8], [pslr_def,mw_def,papr_def]);
-    sensitivity_sweep_ext(cfg, s0, f0, 'lambda_PSLR', [40 80 120], [pslr_def,mw_def,papr_def]);
-    sensitivity_sweep_ext(cfg, s0, f0, 'lambda_MW', [4 7 10], [pslr_def,mw_def,papr_def]);
-    sensitivity_sweep_ext(cfg, s0, f0, 'lambda_PAPR', [5 8 11], [pslr_def,mw_def,papr_def]);
-    sensitivity_sweep_ext(cfg, s0, f0, 'PSLR_margin', [0.4 0.8 1.2 1.6], [pslr_def,mw_def,papr_def]);
-    fprintf('趋势结论提示：增大 lambda_PSLR 往往更利于压低旁瓣，但可能增加 MW/PAPR 代价；lambda_MW/lambda_PAPR 则强化对应约束。\n');
-
-    % 5) 场景变化：泛化能力（我方相对基线增益矩阵）
-    fprintf('\n[5] 场景泛化（TBP/N/SNR）\n');
-    scenarios = [400e6,1.5e-6,600e6,20; 600e6,1.7e-6,720e6,10; 900e6,1.0e-6,1200e6,0];
-    fprintf('Case	B(MHz)	T(us)	fs(MHz)	N	TBP	SNR	ΔPSLR_Ham	ΔPSLR_Kai	ΔPSLR_Tay	ΔPSLR_Cheb\n');
-    for i = 1:size(scenarios,1)
-        B = scenarios(i,1); T = scenarios(i,2); fs = scenarios(i,3); snr_db = scenarios(i,4);
-        [s_scene, f_scene] = build_lfm_ext(B, T, fs);
-        s_scene = add_awgn_ext(s_scene, snr_db);
-        cfg_scene = cfg; cfg_scene.B = B; cfg_scene.T = T; cfg_scene.fs = fs;
-        [b_scene, ~] = run_fa_core_ext(cfg_scene, s_scene, f_scene, B);
-        [pslr_prop, ~, ~] = evaluate_metrics(b_scene, s_scene, fs, B);
-
-        N = length(s_scene);
-        dps = zeros(1, numel(names));
-        for k = 1:numel(names)
-            Wb = build_reference_window_ext(names{k}, f_scene, B, N);
-            sb = ifft(fft(s_scene) .* Wb);
-            [Rb, lagb] = xcorr(sb);
-            mb = compute_metrics_single(safe_normalize(abs(Rb)), lagb, sb);
-            dps(k) = pslr_prop - mb(1);
-        end
-        fprintf('%d	%.0f	%.2f	%.0f	%d	%.1f	%.0f	%+.2f		%+.2f		%+.2f		%+.2f\n', ...
-            i, B/1e6, T*1e6, fs/1e6, N, B*T, snr_db, dps(1), dps(2), dps(3), dps(4));
+    % 图1：频域窗函数对比（dB）
+    figure('Name','论文补充-频域窗函数对比');
+    f_MHz = f0 / 1e6;
+    style = {'k-','r--','b-.','m:','g-'};
+    for i = 1:n_case
+        plot(f_MHz, 20*log10(abs(fftshift(windows_fft(:,i))) + eps), style{i}, 'LineWidth', 1.5); hold on;
     end
+    xlabel('Frequency (MHz)'); ylabel('Magnitude (dB)');
+    title('Frequency-domain Window Comparison');
+    legend(names, 'Location', 'best');
+    grid on; xlim([-cfg.B/2/1e6, cfg.B/2/1e6]); ylim([-80, 5]);
+
+    % 图2：自相关函数对比（dB）
+    figure('Name','论文补充-自相关函数对比');
+    for i = 1:n_case
+        plot(t_corr, 20*log10(auto_corr(:,i) + eps), style{i}, 'LineWidth', 1.5); hold on;
+    end
+    xlabel('Time (\mus)'); ylabel('Normalized Magnitude (dB)');
+    title('Pulse-compression Autocorrelation Comparison');
+    legend(names, 'Location', 'best');
+    grid on; xlim([-0.5 0.5]); ylim([-80 5]);
+
+    % 图3：自相关主瓣对比（线性）
+    figure('Name','论文补充-自相关主瓣对比');
+    [~, idx_peak] = max(auto_corr(:,1));
+    half_width = 60;
+    range_idx = max(1, idx_peak-half_width) : min(length(t_corr), idx_peak+half_width);
+    for i = 1:n_case
+        plot(t_corr(range_idx), auto_corr(range_idx,i), style{i}, 'LineWidth', 1.5); hold on;
+    end
+    xlabel('时延 (\mus)'); ylabel('归一化幅度');
+    title('Autocorrelation Mainlobe Comparison');
+    legend(names, 'Location', 'best');
+    grid on;
 end
+
 function [b_best, best_hist] = run_fa_core_ext(cfg, s_LFM, f, B)
     N = length(s_LFM);
     idx_band = abs(f) <= B/2;
