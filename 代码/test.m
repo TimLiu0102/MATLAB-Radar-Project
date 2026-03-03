@@ -595,7 +595,7 @@ function run_extended_experiments(cfg)
     fprintf('\n=================== 论文补充实验（我方窗函数中心） ===================\n');
     fprintf('复现实验细节：B=%.1f MHz, T=%.2f us, fs=%.1f MHz, TBP=%.1f\n', cfg.B/1e6, cfg.T*1e6, cfg.fs/1e6, cfg.B*cfg.T);
     fprintf('窗长度=带宽内采样点数；脉冲压缩=xcorr 自相关；PSLR=首零点口径，MW=-3 dB口径。\n');
-    fprintf('说明：下表和图仅展示绝对指标，传统窗函数作为固定对照组。\n');
+    fprintf('说明：所有指标计算均调用原函数（compute_metrics_single/evaluate_metrics/compute_PSLR/compute_constraints_v2）。\n');
 
     [s0, f0] = build_lfm_ext(cfg.B, cfg.T, cfg.fs);
     N0 = length(s0);
@@ -608,8 +608,12 @@ function run_extended_experiments(cfg)
     metrics = zeros(n_case, 3); % PSLR, MW, PAPR
     auto_corr = zeros(2*N0-1, n_case);
 
-    % 我方优化窗
-    [b_prop, ~] = run_fa_core_ext(cfg, s0, f0, cfg.B);
+    % 我方优化窗 + 收敛曲线
+    [b_prop, fa_hist] = run_fa_core_ext(cfg, s0, f0, cfg.B);
+    [b_refined, refine_hist, refine_info] = refine_or_keep_ext(cfg, b_prop, s0, cfg.fs, cfg.B);
+    if refine_info.accepted
+        b_prop = b_refined;
+    end
     windows_fft(:,1) = legendre_window(b_prop, cfg.fs, cfg.B, N0);
 
     % 传统窗（固定对照）
@@ -617,7 +621,7 @@ function run_extended_experiments(cfg)
         windows_fft(:,i) = build_reference_window_ext(names{i}, f0, cfg.B, N0);
     end
 
-    % 指标计算
+    % 指标计算（使用原函数）
     for i = 1:n_case
         signals(:,i) = ifft(fft(s0) .* windows_fft(:,i));
         [R, lag] = xcorr(signals(:,i));
@@ -667,6 +671,27 @@ function run_extended_experiments(cfg)
     title('Autocorrelation Mainlobe Comparison');
     legend(names, 'Location', 'best');
     grid on;
+
+    % 图4：收敛曲线（FA 与 FA+精修）
+    figure('Name','论文补充-收敛曲线');
+    plot(fa_hist, 'k-', 'LineWidth', 1.5); hold on;
+    plot(refine_hist, 'r--', 'LineWidth', 1.5);
+    xlabel('Iteration'); ylabel('Objective (PSLR-like)');
+    title('Convergence Curves: FA vs FA+Refine');
+    legend('FA 单独','FA+精修','Location','best');
+    grid on;
+    fprintf('收敛信息：FA终值=%.3f, FA+精修终值=%.3f, 精修是否接受=%d\n', fa_hist(end), refine_hist(end), refine_info.accepted);
+
+    % 参数敏感性（保留）
+    fprintf('\n=================== 参数敏感性（相对默认配置） ===================\n');
+    [pslr_def, mw_def, papr_def] = evaluate_metrics(b_prop, s0, cfg.fs, cfg.B);
+    fprintf('默认配置(我方窗): PSLR=%.2f, MW=%.2e, PAPR=%.3f\n', pslr_def, mw_def, papr_def);
+    sensitivity_sweep_ext(cfg, s0, f0, 'alpha', [0.05 0.1 0.2 0.35], [pslr_def, mw_def, papr_def]);
+    sensitivity_sweep_ext(cfg, s0, f0, 'gamma', [0.5 1.0 1.8], [pslr_def, mw_def, papr_def]);
+    sensitivity_sweep_ext(cfg, s0, f0, 'lambda_PSLR', [40 80 120], [pslr_def, mw_def, papr_def]);
+    sensitivity_sweep_ext(cfg, s0, f0, 'lambda_MW', [4 7 10], [pslr_def, mw_def, papr_def]);
+    sensitivity_sweep_ext(cfg, s0, f0, 'lambda_PAPR', [5 8 11], [pslr_def, mw_def, papr_def]);
+    sensitivity_sweep_ext(cfg, s0, f0, 'PSLR_margin', [0.4 0.8 1.2 1.6], [pslr_def, mw_def, papr_def]);
 end
 
 function [b_best, best_hist] = run_fa_core_ext(cfg, s_LFM, f, B)
