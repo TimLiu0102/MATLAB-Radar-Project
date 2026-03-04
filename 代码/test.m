@@ -598,26 +598,15 @@ function cfg = build_ext_config(B, T, fs, dim, lb, ub, nFireflies, maxIter, nRes
 end
 
 function run_extended_experiments(cfg)
-    fprintf('\n=================== 扩展分析：收敛与参数敏感性 ===================\n');
+    fprintf('\n=================== 扩展分析：参数敏感性 ===================\n');
     [s0, f0] = build_lfm_ext(cfg.B, cfg.T, cfg.fs);
 
-    % 收敛曲线（FA 与 FA+精修）
-    [b_prop, fa_hist] = run_fa_core_ext(cfg, s0, f0, cfg.B);
-    [~, refine_hist, refine_info] = refine_or_keep_ext(cfg, b_prop, s0, cfg.fs, cfg.B);
-
-    figure('Name','收敛曲线：FA vs FA+精修');
-    plot(fa_hist, 'k-', 'LineWidth', 1.5); hold on;
-    plot(refine_hist, 'r--', 'LineWidth', 1.5);
-    xlabel('Iteration'); ylabel('Objective (PSLR-like)');
-    title('Convergence Curves: FA vs FA+Refine');
-    legend('FA 单独','FA+精修','Location','best');
-    grid on;
-    fprintf('收敛信息：FA终值=%.3f, FA+精修终值=%.3f, 精修是否接受=%d\n', fa_hist(end), refine_hist(end), refine_info.accepted);
-
-    % 参数敏感性（图表述，计算指标沿用 compute_metrics_single）
+    % 默认配置下我方窗实际指标
+    [b_prop, ~] = run_fa_core_ext(cfg, s0, f0, cfg.B);
     [pslr_def, mw_def, papr_def] = eval_metrics_by_b_ext(b_prop, s0, cfg.fs, cfg.B);
-    base_metric = [pslr_def, mw_def, papr_def];
+    fprintf('默认配置(我方窗)：PSLR=%.2f, MW=%.2e, PAPR=%.3f\n', pslr_def, mw_def, papr_def);
 
+    % 参数敏感性（图表述，全部为实际值，不是差值）
     sweeps = {
         'alpha', [0.05 0.1 0.2 0.35];
         'gamma', [0.5 1.0 1.8];
@@ -629,20 +618,20 @@ function run_extended_experiments(cfg)
 
     figure('Name','参数敏感性分析');
     tl = tiledlayout(2,3, 'Padding','compact','TileSpacing','compact');
-    title(tl, 'Parameter Sensitivity (relative to default)');
+    title(tl, 'Parameter Sensitivity (absolute metrics)');
 
     for i = 1:size(sweeps,1)
         field_name = sweeps{i,1};
         vals = sweeps{i,2};
-        [d_pslr, d_mw, d_papr] = sensitivity_sweep_ext(cfg, s0, f0, field_name, vals, base_metric);
+        [pslr_vals, mw_vals, papr_vals] = sensitivity_sweep_ext(cfg, s0, f0, field_name, vals);
         nexttile;
-        plot(vals, d_pslr, 'k-o', 'LineWidth', 1.2); hold on;
-        plot(vals, d_mw, 'b-s', 'LineWidth', 1.2);
-        plot(vals, d_papr, 'r-^', 'LineWidth', 1.2);
+        plot(vals, pslr_vals, 'k-o', 'LineWidth', 1.2); hold on;
+        plot(vals, mw_vals, 'b-s', 'LineWidth', 1.2);
+        plot(vals, papr_vals, 'r-^', 'LineWidth', 1.2);
         xlabel(field_name);
-        ylabel('\Delta metric');
+        ylabel('Metric value');
         title(field_name);
-        legend('\DeltaPSLR','\DeltaMW','\DeltaPAPR','Location','best');
+        legend('PSLR','MW','PAPR','Location','best');
         grid on;
     end
 end
@@ -752,18 +741,18 @@ function W = build_reference_window_ext(name, f, B, N)
     Wc = zeros(N,1); Wc(idx_band) = w; Wc = Wc/(max(Wc)+eps); W = ifftshift(Wc);
 end
 
-function [d_pslr, d_mw, d_papr] = sensitivity_sweep_ext(cfg, s0, f0, field_name, vals, base_metric)
-    d_pslr = zeros(size(vals));
-    d_mw = zeros(size(vals));
-    d_papr = zeros(size(vals));
+function [pslr_vals, mw_vals, papr_vals] = sensitivity_sweep_ext(cfg, s0, f0, field_name, vals)
+    pslr_vals = zeros(size(vals));
+    mw_vals = zeros(size(vals));
+    papr_vals = zeros(size(vals));
     for i = 1:numel(vals)
         cfg_i = cfg;
         cfg_i.(field_name) = vals(i);
         [b, ~] = run_fa_core_ext(cfg_i, s0, f0, cfg_i.B);
         [pslr, mw, papr] = eval_metrics_by_b_ext(b, s0, cfg_i.fs, cfg_i.B);
-        d_pslr(i) = pslr - base_metric(1);
-        d_mw(i) = mw - base_metric(2);
-        d_papr(i) = papr - base_metric(3);
+        pslr_vals(i) = pslr;
+        mw_vals(i) = mw;
+        papr_vals(i) = papr;
     end
 end
 
