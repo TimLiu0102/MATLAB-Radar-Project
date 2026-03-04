@@ -354,7 +354,22 @@ xlabel('Frequency (MHz)'); ylabel('Magnitude (dB)');
 title('Frequency Domain Window Functions (dB)');
 legend('Proposed (Legendre)','Hamming','Kaiser','Taylor','Chebyshev','Location','best');
 grid on;
-xlim([-B/2/1e6, B/2/1e6]);
+
+% 频谱主瓣宽度（-3 dB）内显示
+S_lfm = abs(fftshift(fft(s_LFM_orig)));
+[~, idx_pk_spec] = max(S_lfm);
+th_spec = max(S_lfm) * 10^(-3/20);
+left_spec = find(S_lfm(1:idx_pk_spec) < th_spec, 1, 'last');
+if isempty(left_spec)
+    left_spec = 1;
+end
+right_rel_spec = find(S_lfm(idx_pk_spec:end) < th_spec, 1, 'first');
+if isempty(right_rel_spec)
+    right_spec = length(S_lfm);
+else
+    right_spec = idx_pk_spec + right_rel_spec - 1;
+end
+xlim([f(left_spec), f(right_spec)] / 1e6);
 ylim([-80, 5]);
 
 %% ========================================================================
@@ -618,18 +633,21 @@ function run_extended_experiments(cfg)
 
     figure('Name','参数敏感性分析');
     tl = tiledlayout(2,3, 'Padding','compact','TileSpacing','compact');
-    title(tl, 'Parameter Sensitivity (absolute metrics)');
+    title(tl, 'Parameter Sensitivity (dual y-axis)');
 
     for i = 1:size(sweeps,1)
         field_name = sweeps{i,1};
         vals = sweeps{i,2};
         [pslr_vals, mw_vals, papr_vals] = sensitivity_sweep_ext(cfg, s0, f0, field_name, vals);
         nexttile;
-        plot(vals, pslr_vals, 'k-o', 'LineWidth', 1.2); hold on;
-        plot(vals, mw_vals, 'b-s', 'LineWidth', 1.2);
+        yyaxis left;
+        plot(vals, pslr_vals, 'k-o', 'LineWidth', 1.2);
+        ylabel('PSLR (dB)');
+        yyaxis right;
+        plot(vals, mw_vals, 'b-s', 'LineWidth', 1.2); hold on;
         plot(vals, papr_vals, 'r-^', 'LineWidth', 1.2);
+        ylabel('MW / PAPR');
         xlabel(field_name);
-        ylabel('Metric value');
         title(field_name);
         legend('PSLR','MW','PAPR','Location','best');
         grid on;
