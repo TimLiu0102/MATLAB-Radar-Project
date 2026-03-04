@@ -172,54 +172,72 @@ fprintf('=======================================================================
 
 
 %% ========================================================================
-%  Yamaoka & Oshima 2025: Proposed Method 1/2/3 对比
-%  保持现有“频域乘窗->IFFT->xcorr->compute_metrics_single”框架
+%  Yamaoka & Oshima 2025 仿真窗对比（不改变原有口径）
 % =========================================================================
 
-% A) 以 Legendre 最终窗 W_opt 为 base
-out_leg = apply_yamaoka_oshima_methods_to_freq_window(W_opt, fs, B);
+idx_band = abs(f) <= B/2;
+f_norm_band = 2 * f(idx_band) / B;
+t_norm = f_norm_band / 2;   % 与论文 t in [-0.5,0.5] 对齐
 
-s_leg_pm1 = ifft(fft(s_LFM) .* out_leg.W_pm1);
-s_leg_pm2 = ifft(fft(s_LFM) .* out_leg.W_pm2);
-s_leg_pm3 = ifft(fft(s_LFM) .* out_leg.W_pm3);
+% 三种基窗（论文系数写死）
+w_nuttall = build_yamaoka_base_window('nuttall', t_norm);
+w_bh = build_yamaoka_base_window('blackman-harris', t_norm);
+w_bn = build_yamaoka_base_window('blackman-nuttall', t_norm);
 
-[R_leg_pm1, lag_cmp] = xcorr(s_leg_pm1); R_leg_pm1 = safe_normalize(abs(R_leg_pm1));
-[R_leg_pm2, ~] = xcorr(s_leg_pm2);       R_leg_pm2 = safe_normalize(abs(R_leg_pm2));
-[R_leg_pm3, ~] = xcorr(s_leg_pm3);       R_leg_pm3 = safe_normalize(abs(R_leg_pm3));
+% PM1/PM2/PM3 因子（论文式(2)(3)(4)）
+g_pm1 = cos(pi * t_norm);
+g_pm2 = 0.5 + 0.5 * cos(2*pi*t_norm);
+g_pm3 = 0.75 * cos(pi*t_norm) + 0.25 * cos(3*pi*t_norm);
 
-[PSLR_leg_pm1, MW_leg_pm1, PAPR_leg_pm1] = compute_metrics_single(R_leg_pm1, lag_cmp, s_leg_pm1);
-[PSLR_leg_pm2, MW_leg_pm2, PAPR_leg_pm2] = compute_metrics_single(R_leg_pm2, lag_cmp, s_leg_pm2);
-[PSLR_leg_pm3, MW_leg_pm3, PAPR_leg_pm3] = compute_metrics_single(R_leg_pm3, lag_cmp, s_leg_pm3);
+g_pm1 = max(g_pm1, 0);
+g_pm2 = max(g_pm2, 0);
+g_pm3 = max(g_pm3, 0);
 
-% B) 以 Hamming 参考窗 W_hamming_ref 为 base
-out_ham = apply_yamaoka_oshima_methods_to_freq_window(W_hamming_ref, fs, B);
+% 频域窗构造（带内赋值 + ifftshift）
+W_N_base = build_freq_window_from_segment(w_nuttall, idx_band, N);
+W_N_PM1  = build_freq_window_from_segment(w_nuttall .* g_pm1, idx_band, N);
+W_N_PM2  = build_freq_window_from_segment(w_nuttall .* g_pm2, idx_band, N);
+W_N_PM3  = build_freq_window_from_segment(w_nuttall .* g_pm3, idx_band, N);
 
-s_ham_base = ifft(fft(s_LFM) .* W_hamming_ref);
-s_ham_pm1 = ifft(fft(s_LFM) .* out_ham.W_pm1);
-s_ham_pm2 = ifft(fft(s_LFM) .* out_ham.W_pm2);
-s_ham_pm3 = ifft(fft(s_LFM) .* out_ham.W_pm3);
+W_BH_base = build_freq_window_from_segment(w_bh, idx_band, N);
+W_BH_PM1  = build_freq_window_from_segment(w_bh .* g_pm1, idx_band, N);
+W_BH_PM2  = build_freq_window_from_segment(w_bh .* g_pm2, idx_band, N);
+W_BH_PM3  = build_freq_window_from_segment(w_bh .* g_pm3, idx_band, N);
 
-[R_ham_base, ~] = xcorr(s_ham_base); R_ham_base = safe_normalize(abs(R_ham_base));
-[R_ham_pm1, ~] = xcorr(s_ham_pm1);   R_ham_pm1 = safe_normalize(abs(R_ham_pm1));
-[R_ham_pm2, ~] = xcorr(s_ham_pm2);   R_ham_pm2 = safe_normalize(abs(R_ham_pm2));
-[R_ham_pm3, ~] = xcorr(s_ham_pm3);   R_ham_pm3 = safe_normalize(abs(R_ham_pm3));
+W_BN_base = build_freq_window_from_segment(w_bn, idx_band, N);
+W_BN_PM1  = build_freq_window_from_segment(w_bn .* g_pm1, idx_band, N);
+W_BN_PM2  = build_freq_window_from_segment(w_bn .* g_pm2, idx_band, N);
+W_BN_PM3  = build_freq_window_from_segment(w_bn .* g_pm3, idx_band, N);
 
-[PSLR_ham_base, MW_ham_base, PAPR_ham_base] = compute_metrics_single(R_ham_base, lag_cmp, s_ham_base);
-[PSLR_ham_pm1, MW_ham_pm1, PAPR_ham_pm1] = compute_metrics_single(R_ham_pm1, lag_cmp, s_ham_pm1);
-[PSLR_ham_pm2, MW_ham_pm2, PAPR_ham_pm2] = compute_metrics_single(R_ham_pm2, lag_cmp, s_ham_pm2);
-[PSLR_ham_pm3, MW_ham_pm3, PAPR_ham_pm3] = compute_metrics_single(R_ham_pm3, lag_cmp, s_ham_pm3);
+method_names = {
+    'Legendre_opt', ...
+    'Nuttall_base', 'Nuttall_PM1', 'Nuttall_PM2', 'Nuttall_PM3', ...
+    'BH_base', 'BH_PM1', 'BH_PM2', 'BH_PM3', ...
+    'BN_base', 'BN_PM1', 'BN_PM2', 'BN_PM3'};
 
-fprintf('\n=================== Yamaoka & Oshima 2025 Comparison ===================\n');
+windows = {W_opt, ...
+    W_N_base, W_N_PM1, W_N_PM2, W_N_PM3, ...
+    W_BH_base, W_BH_PM1, W_BH_PM2, W_BH_PM3, ...
+    W_BN_base, W_BN_PM1, W_BN_PM2, W_BN_PM3};
+
+metrics = zeros(numel(method_names), 3);
+metrics(1,:) = [PSLR_opt, MW_opt, PAPR_opt];
+
+for i = 2:numel(method_names)
+    s_w = ifft(fft(s_LFM) .* windows{i});
+    [R_w, lag_w] = xcorr(s_w);
+    R_w = safe_normalize(abs(R_w));
+    [pslr_i, mw_i, papr_i] = compute_metrics_single(R_w, lag_w, s_w);
+    metrics(i,:) = [pslr_i, mw_i, papr_i];
+end
+
+fprintf('\n=================== Yamaoka & Oshima 2025 Window Comparison ===================\n');
 fprintf('Method\t\t\tPSLR(dB)\tMW\t\tPAPR\n');
-fprintf('Legendre_opt\t\t%.2f\t\t%.2e\t%.2f\n', PSLR_opt, MW_opt, PAPR_opt);
-fprintf('Legendre+PM1\t\t%.2f\t\t%.2e\t%.2f\n', PSLR_leg_pm1, MW_leg_pm1, PAPR_leg_pm1);
-fprintf('Legendre+PM2\t\t%.2f\t\t%.2e\t%.2f\n', PSLR_leg_pm2, MW_leg_pm2, PAPR_leg_pm2);
-fprintf('Legendre+PM3\t\t%.2f\t\t%.2e\t%.2f\n', PSLR_leg_pm3, MW_leg_pm3, PAPR_leg_pm3);
-fprintf('Hamming_ref\t\t%.2f\t\t%.2e\t%.2f\n', PSLR_ham_base, MW_ham_base, PAPR_ham_base);
-fprintf('Hamming+PM1\t\t%.2f\t\t%.2e\t%.2f\n', PSLR_ham_pm1, MW_ham_pm1, PAPR_ham_pm1);
-fprintf('Hamming+PM2\t\t%.2f\t\t%.2e\t%.2f\n', PSLR_ham_pm2, MW_ham_pm2, PAPR_ham_pm2);
-fprintf('Hamming+PM3\t\t%.2f\t\t%.2e\t%.2f\n', PSLR_ham_pm3, MW_ham_pm3, PAPR_ham_pm3);
-fprintf('=======================================================================\n');
+for i = 1:numel(method_names)
+    fprintf('%-14s\t%.2f\t\t%.2e\t%.2f\n', method_names{i}, metrics(i,1), metrics(i,2), metrics(i,3));
+end
+fprintf('================================================================================\n');
+
 %% ========================================================================
 %  函数定义
 %% ========================================================================
@@ -405,33 +423,25 @@ function [c, ceq] = compute_constraints_v2(b, s_LFM, fs, B, MW_target, PAPR_targ
 end
 
 
-function out = apply_yamaoka_oshima_methods_to_freq_window(W_base, fs, B)
-    N = length(W_base);
-    Wc = fftshift(W_base(:));
-    f = (-N/2:N/2-1)' * (fs/N);
 
-    idx_band = abs(f) <= B/2;
-    f_norm = 2 * f(idx_band) / B;
-    t_norm = f_norm / 2;
 
-    W0_seg = Wc(idx_band);
-    g1 = cos(pi * t_norm);
-    g2 = 0.5 + 0.5 * cos(2*pi*t_norm);
-    g3 = 0.75 * cos(pi*t_norm) + 0.25 * cos(3*pi*t_norm);
+function W = build_freq_window_from_segment(w_seg, idx_band, N)
+    W_centered = zeros(N,1);
+    W_centered(idx_band) = w_seg(:);
+    W_centered = W_centered / (max(abs(W_centered)) + eps);
+    W = ifftshift(W_centered);
+end
 
-    g1 = max(g1, 0);
-    g2 = max(g2, 0);
-    g3 = max(g3, 0);
-
-    W1c = zeros(N,1); W1c(idx_band) = W0_seg .* g1;
-    W2c = zeros(N,1); W2c(idx_band) = W0_seg .* g2;
-    W3c = zeros(N,1); W3c(idx_band) = W0_seg .* g3;
-
-    W1c = W1c / (max(abs(W1c)) + eps);
-    W2c = W2c / (max(abs(W2c)) + eps);
-    W3c = W3c / (max(abs(W3c)) + eps);
-
-    out.W_pm1 = ifftshift(W1c);
-    out.W_pm2 = ifftshift(W2c);
-    out.W_pm3 = ifftshift(W3c);
+function w = build_yamaoka_base_window(type_name, t_norm)
+    t = t_norm(:);
+    switch lower(type_name)
+        case 'nuttall'
+            w = 0.355768 + 0.487396*cos(2*pi*t) + 0.012604*cos(4*pi*t) + 0.012604*cos(6*pi*t);
+        case 'blackman-harris'
+            w = 0.35875 + 0.48829*cos(2*pi*t) + 0.014128*cos(4*pi*t) + 0.01168*cos(6*pi*t);
+        case 'blackman-nuttall'
+            w = 0.3635819 + 0.4891775*cos(2*pi*t) + 0.01365995*cos(4*pi*t) + 0.0106411*cos(6*pi*t);
+        otherwise
+            error('Unknown Yamaoka base window type: %s', type_name);
+    end
 end
