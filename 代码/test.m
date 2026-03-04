@@ -315,8 +315,7 @@ plot(lag/fs*1e6, 20*log10(R_hamming+eps), 'r--', 'LineWidth', 1.2);
 plot(lag/fs*1e6, 20*log10(R_kaiser+eps), 'b-.', 'LineWidth', 1.2);
 plot(lag/fs*1e6, 20*log10(R_taylor+eps), 'm:', 'LineWidth', 1.4);
 plot(lag/fs*1e6, 20*log10(R_cheb+eps), 'c--', 'LineWidth', 1.2);
-xlabel('Time (μs)'); ylabel('Normalized Magnitude (dB)');
-title('Pulse Compression Output Comparison');
+xlabel('Time (us)'); ylabel('Normalized Magnitude (dB)');
 legend('LFM','Proposed (Legendre)','Hamming','Kaiser','Taylor','Chebyshev','Location','best');
 grid on; xlim([-0.5 0.5]); ylim([-80 5]);
 
@@ -335,9 +334,8 @@ plot(t_corr(range_idx), R_hamming(range_idx), 'r--', 'LineWidth', 1.2);
 plot(t_corr(range_idx), R_kaiser(range_idx), 'b-.', 'LineWidth', 1.2);
 plot(t_corr(range_idx), R_taylor(range_idx), 'm:', 'LineWidth', 1.4);
 plot(t_corr(range_idx), R_cheb(range_idx), 'c--', 'LineWidth', 1.2);
-xlabel('时延 (μs)'); ylabel('归一化幅度');
-title('自相关主瓣区域');
-legend('原始 LFM','优化勒让德窗','Hamming','Kaiser','Taylor','Chebyshev','Location','best');
+xlabel('Delay (us)'); ylabel('Normalized Magnitude');
+legend('Original LFM','Proposed (Legendre)','Hamming','Kaiser','Taylor','Chebyshev','Location','best');
 grid on;
 
 %% ========================================================================
@@ -351,7 +349,6 @@ plot(f_MHz, 20*log10(abs(fftshift(W_kaiser))+eps), 'b-.', 'LineWidth', 1.2);
 plot(f_MHz, 20*log10(abs(fftshift(W_taylor))+eps), 'm:', 'LineWidth', 1.4);
 plot(f_MHz, 20*log10(abs(fftshift(W_cheb))+eps), 'c--', 'LineWidth', 1.2);
 xlabel('Frequency (MHz)'); ylabel('Magnitude (dB)');
-title('Frequency Domain Window Functions (dB)');
 legend('Proposed (Legendre)','Hamming','Kaiser','Taylor','Chebyshev','Location','best');
 grid on;
 
@@ -631,25 +628,24 @@ function run_extended_experiments(cfg)
         'PSLR_margin', [0.4 0.8 1.2 1.6]
     };
 
-    figure('Name','参数敏感性分析');
+    figure('Name','Sensitivity Analysis');
     tl = tiledlayout(2,3, 'Padding','compact','TileSpacing','compact');
-    title(tl, 'Parameter Sensitivity (dual y-axis)');
 
     for i = 1:size(sweeps,1)
         field_name = sweeps{i,1};
         vals = sweeps{i,2};
         [pslr_vals, mw_vals, papr_vals] = sensitivity_sweep_ext(cfg, s0, f0, field_name, vals);
+        x_label_latex = field_to_latex_ext(field_name);
         nexttile;
         yyaxis left;
         plot(vals, pslr_vals, 'k-o', 'LineWidth', 1.2);
-        ylabel('PSLR (dB)');
+        ylabel('$\mathrm{PSLR}\,(\mathrm{dB})$', 'Interpreter', 'latex');
         yyaxis right;
         plot(vals, mw_vals, 'b-s', 'LineWidth', 1.2); hold on;
         plot(vals, papr_vals, 'r-^', 'LineWidth', 1.2);
-        ylabel('MW / PAPR');
-        xlabel(field_name);
-        title(field_name);
-        legend('PSLR','MW','PAPR','Location','best');
+        ylabel('$\mathrm{MW},\;\mathrm{PAPR}$', 'Interpreter', 'latex');
+        xlabel(x_label_latex, 'Interpreter', 'latex');
+        legend({'$\mathrm{PSLR}$','$\mathrm{MW}$','$\mathrm{PAPR}$'}, 'Interpreter', 'latex', 'Location', 'best');
         grid on;
     end
 end
@@ -757,6 +753,25 @@ function W = build_reference_window_ext(name, f, B, N)
             w = hamming(N_band);
     end
     Wc = zeros(N,1); Wc(idx_band) = w; Wc = Wc/(max(Wc)+eps); W = ifftshift(Wc);
+end
+
+function x_label_latex = field_to_latex_ext(field_name)
+    switch field_name
+        case 'alpha'
+            x_label_latex = '$\alpha$';
+        case 'gamma'
+            x_label_latex = '$\gamma$';
+        case 'lambda_PSLR'
+            x_label_latex = '$\lambda_{\mathrm{PSLR}}$';
+        case 'lambda_MW'
+            x_label_latex = '$\lambda_{\mathrm{MW}}$';
+        case 'lambda_PAPR'
+            x_label_latex = '$\lambda_{\mathrm{PAPR}}$';
+        case 'PSLR_margin'
+            x_label_latex = '$\Delta_{\mathrm{PSLR}}$';
+        otherwise
+            x_label_latex = ['$' field_name '$'];
+    end
 end
 
 function [pslr_vals, mw_vals, papr_vals] = sensitivity_sweep_ext(cfg, s0, f0, field_name, vals)
