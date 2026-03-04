@@ -172,76 +172,54 @@ fprintf('=======================================================================
 
 
 %% ========================================================================
-%  Algorithm 2 (Wang 2023 pulse-compression window) + 对比
-%% ========================================================================
-params_alg2 = struct();
-params_alg2.rho = 0.01;
-params_alg2.Tmax = 4500;
-params_alg2.psi = 1e-4;
-params_alg2.tau = 1.9;
-params_alg2.seed = 80;
+%  Yamaoka & Oshima 2025: Proposed Method 1/2/3 对比
+%  保持现有“频域乘窗->IFFT->xcorr->compute_metrics_single”框架
+% =========================================================================
 
-% tau 自动扫（粗扫）
-tau_list = [1.2, 1.5, 1.9, 2.3, 2.8];
-coarse_tmax = 1500;
+% A) 以 Legendre 最终窗 W_opt 为 base
+out_leg = apply_yamaoka_oshima_methods_to_freq_window(W_opt, fs, B);
 
-alg2_stats = struct('tau', cell(numel(tau_list),1), 'pslr', [], 'mw', [], 'papr', [], 'w', []);
-for i_tau = 1:numel(tau_list)
-    params_tmp = params_alg2;
-    params_tmp.tau = tau_list(i_tau);
-    params_tmp.Tmax = coarse_tmax;
-    [w_tmp, info_tmp] = design_window_alg2_wang2023(s_LFM, params_tmp);
+s_leg_pm1 = ifft(fft(s_LFM) .* out_leg.W_pm1);
+s_leg_pm2 = ifft(fft(s_LFM) .* out_leg.W_pm2);
+s_leg_pm3 = ifft(fft(s_LFM) .* out_leg.W_pm3);
 
-    W_tmp_freq = fft(w_tmp);
-    W_tmp_freq = W_tmp_freq / (max(abs(W_tmp_freq)) + eps);
-    s_tmp = ifft(fft(s_LFM) .* W_tmp_freq);
-    [R_tmp, lag_tmp] = xcorr(s_tmp);
-    R_tmp = safe_normalize(abs(R_tmp));
-    [pslr_tmp, mw_tmp, papr_tmp] = compute_metrics_single(R_tmp, lag_tmp, s_tmp);
+[R_leg_pm1, lag_cmp] = xcorr(s_leg_pm1); R_leg_pm1 = safe_normalize(abs(R_leg_pm1));
+[R_leg_pm2, ~] = xcorr(s_leg_pm2);       R_leg_pm2 = safe_normalize(abs(R_leg_pm2));
+[R_leg_pm3, ~] = xcorr(s_leg_pm3);       R_leg_pm3 = safe_normalize(abs(R_leg_pm3));
 
-    alg2_stats(i_tau).tau = tau_list(i_tau);
-    alg2_stats(i_tau).pslr = pslr_tmp;
-    alg2_stats(i_tau).mw = mw_tmp;
-    alg2_stats(i_tau).papr = papr_tmp;
-    alg2_stats(i_tau).w = w_tmp;
-    alg2_stats(i_tau).info = info_tmp;
-end
+[PSLR_leg_pm1, MW_leg_pm1, PAPR_leg_pm1] = compute_metrics_single(R_leg_pm1, lag_cmp, s_leg_pm1);
+[PSLR_leg_pm2, MW_leg_pm2, PAPR_leg_pm2] = compute_metrics_single(R_leg_pm2, lag_cmp, s_leg_pm2);
+[PSLR_leg_pm3, MW_leg_pm3, PAPR_leg_pm3] = compute_metrics_single(R_leg_pm3, lag_cmp, s_leg_pm3);
 
-% 选择tau：优先PSLR最优且 MW/PAPR 相比 W_opt 不超过 +10%
-idx_ok = [];
-for i_tau = 1:numel(tau_list)
-    if alg2_stats(i_tau).mw <= 1.10*MW_opt && alg2_stats(i_tau).papr <= 1.10*PAPR_opt
-        idx_ok(end+1) = i_tau; %#ok<AGROW>
-    end
-end
-if ~isempty(idx_ok)
-    [~, rel_idx] = min([alg2_stats(idx_ok).pslr]);
-    best_idx = idx_ok(rel_idx);
-    tau_note = 'constraint-aware selection';
-else
-    [~, best_idx] = min([alg2_stats.pslr]);
-    tau_note = 'PSLR-only fallback';
-end
+% B) 以 Hamming 参考窗 W_hamming_ref 为 base
+out_ham = apply_yamaoka_oshima_methods_to_freq_window(W_hamming_ref, fs, B);
 
-params_alg2.tau = alg2_stats(best_idx).tau;
-[w_alg2, info_alg2] = design_window_alg2_wang2023(s_LFM, params_alg2);
+s_ham_base = ifft(fft(s_LFM) .* W_hamming_ref);
+s_ham_pm1 = ifft(fft(s_LFM) .* out_ham.W_pm1);
+s_ham_pm2 = ifft(fft(s_LFM) .* out_ham.W_pm2);
+s_ham_pm3 = ifft(fft(s_LFM) .* out_ham.W_pm3);
 
-W_alg2_freq = fft(w_alg2);
-W_alg2_freq = W_alg2_freq / (max(abs(W_alg2_freq)) + eps);
-s_alg2 = ifft(fft(s_LFM) .* W_alg2_freq);
-[R_alg2, lag_alg2] = xcorr(s_alg2);
-R_alg2 = safe_normalize(abs(R_alg2));
-[PSLR_alg2, MW_alg2, PAPR_alg2] = compute_metrics_single(R_alg2, lag_alg2, s_alg2);
+[R_ham_base, ~] = xcorr(s_ham_base); R_ham_base = safe_normalize(abs(R_ham_base));
+[R_ham_pm1, ~] = xcorr(s_ham_pm1);   R_ham_pm1 = safe_normalize(abs(R_ham_pm1));
+[R_ham_pm2, ~] = xcorr(s_ham_pm2);   R_ham_pm2 = safe_normalize(abs(R_ham_pm2));
+[R_ham_pm3, ~] = xcorr(s_ham_pm3);   R_ham_pm3 = safe_normalize(abs(R_ham_pm3));
 
-fprintf('\n=================== Legendre vs Wang-Alg2 vs Hamming ===================\n');
-fprintf('Selected tau for Alg2 = %.2f (%s)\n', params_alg2.tau, tau_note);
+[PSLR_ham_base, MW_ham_base, PAPR_ham_base] = compute_metrics_single(R_ham_base, lag_cmp, s_ham_base);
+[PSLR_ham_pm1, MW_ham_pm1, PAPR_ham_pm1] = compute_metrics_single(R_ham_pm1, lag_cmp, s_ham_pm1);
+[PSLR_ham_pm2, MW_ham_pm2, PAPR_ham_pm2] = compute_metrics_single(R_ham_pm2, lag_cmp, s_ham_pm2);
+[PSLR_ham_pm3, MW_ham_pm3, PAPR_ham_pm3] = compute_metrics_single(R_ham_pm3, lag_cmp, s_ham_pm3);
+
+fprintf('\n=================== Yamaoka & Oshima 2025 Comparison ===================\n');
 fprintf('Method\t\t\tPSLR(dB)\tMW\t\tPAPR\n');
-fprintf('Legendre (W_opt)\t%.2f\t\t%.2e\t%.2f\n', PSLR_opt, MW_opt, PAPR_opt);
-fprintf('Wang Alg2\t\t%.2f\t\t%.2e\t%.2f\n', PSLR_alg2, MW_alg2, PAPR_alg2);
-fprintf('Hamming baseline\t%.2f\t\t%.2e\t%.2f\n', PSLR_hamming_ref, MW_hamming_ref, PAPR_hamming_ref);
-fprintf('Alg2 iterations = %d, final residual = %.3e\n', info_alg2.iters, info_alg2.history.residual(end));
+fprintf('Legendre_opt\t\t%.2f\t\t%.2e\t%.2f\n', PSLR_opt, MW_opt, PAPR_opt);
+fprintf('Legendre+PM1\t\t%.2f\t\t%.2e\t%.2f\n', PSLR_leg_pm1, MW_leg_pm1, PAPR_leg_pm1);
+fprintf('Legendre+PM2\t\t%.2f\t\t%.2e\t%.2f\n', PSLR_leg_pm2, MW_leg_pm2, PAPR_leg_pm2);
+fprintf('Legendre+PM3\t\t%.2f\t\t%.2e\t%.2f\n', PSLR_leg_pm3, MW_leg_pm3, PAPR_leg_pm3);
+fprintf('Hamming_ref\t\t%.2f\t\t%.2e\t%.2f\n', PSLR_ham_base, MW_ham_base, PAPR_ham_base);
+fprintf('Hamming+PM1\t\t%.2f\t\t%.2e\t%.2f\n', PSLR_ham_pm1, MW_ham_pm1, PAPR_ham_pm1);
+fprintf('Hamming+PM2\t\t%.2f\t\t%.2e\t%.2f\n', PSLR_ham_pm2, MW_ham_pm2, PAPR_ham_pm2);
+fprintf('Hamming+PM3\t\t%.2f\t\t%.2e\t%.2f\n', PSLR_ham_pm3, MW_ham_pm3, PAPR_ham_pm3);
 fprintf('=======================================================================\n');
-
 %% ========================================================================
 %  函数定义
 %% ========================================================================
@@ -427,300 +405,33 @@ function [c, ceq] = compute_constraints_v2(b, s_LFM, fs, B, MW_target, PAPR_targ
 end
 
 
-function [w_alg2, info] = design_window_alg2_wang2023(s_LFM, params)
-    if ~isfield(params,'rho'), params.rho = 0.01; end
-    if ~isfield(params,'Tmax'), params.Tmax = 4500; end
-    if ~isfield(params,'psi'), params.psi = 1e-4; end
-    if ~isfield(params,'tau'), params.tau = 1.9; end
-    if ~isfield(params,'seed'), params.seed = 80; end
+function out = apply_yamaoka_oshima_methods_to_freq_window(W_base, fs, B)
+    N = length(W_base);
+    Wc = fftshift(W_base(:));
+    f = (-N/2:N/2-1)' * (fs/N);
 
-    rng(params.seed);
-    x = s_LFM(:);
-    N = length(x);
-    Xdiag = conj(x);
+    idx_band = abs(f) <= B/2;
+    f_norm = 2 * f(idx_band) / B;
+    t_norm = f_norm / 2;
 
-    [R0, lag0] = xcorr(x);
-    R0 = safe_normalize(abs(R0));
-    [left_null, right_null] = get_mainlobe_bounds(R0, lag0);
-    Omega_idx = [1:left_null-1, right_null+1:length(R0)];
-    Omega_m = lag0(Omega_idx);
-    M = numel(Omega_m);
+    W0_seg = Wc(idx_band);
+    g1 = cos(pi * t_norm);
+    g2 = 0.5 + 0.5 * cos(2*pi*t_norm);
+    g3 = 0.75 * cos(pi*t_norm) + 0.25 * cos(3*pi*t_norm);
 
-    a0 = Xdiag .* x;
-    am_mat = zeros(N, M);
-    for k = 1:M
-        sx = linear_shift_zero_pad(x, Omega_m(k));
-        am_mat(:,k) = Xdiag .* sx;
-    end
+    g1 = max(g1, 0);
+    g2 = max(g2, 0);
+    g3 = max(g3, 0);
 
-    rho = params.rho;
-    psi = params.psi;
+    W1c = zeros(N,1); W1c(idx_band) = W0_seg .* g1;
+    W2c = zeros(N,1); W2c(idx_band) = W0_seg .* g2;
+    W3c = zeros(N,1); W3c(idx_band) = W0_seg .* g3;
 
-    w = ones(N,1);
-    y = w' * a0;
-    z = (w' * am_mat).';
-    u = abs(y);
-    v = max(abs(z));
-    u_bar = max(u, eps);
-    v_bar = max(v, 0);
+    W1c = W1c / (max(abs(W1c)) + eps);
+    W2c = W2c / (max(abs(W2c)) + eps);
+    W3c = W3c / (max(abs(W3c)) + eps);
 
-    lambda = 0;
-    kappa = zeros(M,1);
-    theta = 0;
-    zeta = 0;
-
-    history.obj = nan(params.Tmax,1);
-    history.residual = nan(params.Tmax,1);
-    history.u = nan(params.Tmax,1);
-    history.v = nan(params.Tmax,1);
-
-    for it = 1:params.Tmax
-        % Step-1: (y,z,u,v) projection update
-        y_hat = (w' * a0) - lambda / rho;
-        z_hat = (w' * am_mat).' - kappa / rho;
-        u_hat = real(u_bar - theta / rho);
-        v_hat = real(v_bar - zeta / rho);
-
-        [y_vec, u] = project_geq_complex(y_hat, u_hat);
-        y = y_vec(1);
-        [z, v] = project_leq_complex(z_hat, v_hat);
-
-        % Step-2: (u_bar,v_bar) update via cubic-root selection (paper-style surrogate)
-        [u_bar, v_bar] = update_uvbar_cubic(u, v, theta, zeta, rho);
-
-        % Step-3: w update (QCQP with similarity constraint)
-        [w, ~] = update_w_qcqp(a0, am_mat, y, z, lambda, kappa, x, params.tau, rho, w);
-
-        % Dual updates
-        ry = y - (w' * a0);
-        rz = z - (w' * am_mat).';
-        ru = u - u_bar;
-        rv = v - v_bar;
-
-        lambda = lambda + rho * ry;
-        kappa = kappa + rho * rz;
-        theta = theta + rho * ru;
-        zeta = zeta + rho * rv;
-
-        res_y = abs(ry);
-        res_z = sum(abs(rz));
-        residual = res_y + res_z;
-
-        history.obj(it) = real(v_bar / max(u_bar, eps));
-        history.residual(it) = residual;
-        history.u(it) = real(u_bar);
-        history.v(it) = real(v_bar);
-
-        if residual <= psi
-            break;
-        end
-    end
-
-    history.obj = history.obj(1:it);
-    history.residual = history.residual(1:it);
-    history.u = history.u(1:it);
-    history.v = history.v(1:it);
-
-    w_alg2 = w;
-    info.iters = it;
-    info.Omega_m = Omega_m;
-    info.history = history;
-end
-
-function [left_null, right_null] = get_mainlobe_bounds(R, lag)
-    dummy = ones(numel(R),1);
-    [~, ~, ~] = compute_metrics_single(R, lag, dummy); %#ok<ASGLU>
-
-    R = R(:);
-    [~, idx_peak] = max(R);
-
-    left_null = idx_peak;
-    for i = idx_peak:-1:2
-        if R(i-1) > R(i) && R(i) < R(i+1)
-            left_null = i;
-            break;
-        end
-    end
-
-    right_null = idx_peak;
-    for i = idx_peak:length(R)-2
-        if R(i) > R(i+1) && R(i+1) < R(i+2)
-            right_null = i+1;
-            break;
-        end
-    end
-
-    th_3dB = 10^(-3/20);
-    left_3dB = find(R(1:idx_peak) < th_3dB, 1, 'last');
-    if isempty(left_3dB), left_3dB = 1; end
-    right_3dB_rel = find(R(idx_peak:end) < th_3dB, 1, 'first');
-    if isempty(right_3dB_rel), right_3dB = length(R); else, right_3dB = idx_peak + right_3dB_rel - 1; end
-
-    th_20dB = 10^(-20/20);
-    if left_null == idx_peak
-        left_20 = find(R(1:idx_peak) < th_20dB, 1, 'last');
-        if ~isempty(left_20), left_null = left_20; else, left_null = left_3dB; end
-    end
-    if right_null == idx_peak
-        right_20_rel = find(R(idx_peak:end) < th_20dB, 1, 'first');
-        if ~isempty(right_20_rel), right_null = idx_peak + right_20_rel - 1; else, right_null = right_3dB; end
-    end
-end
-
-function sx = linear_shift_zero_pad(x, m)
-    x = x(:);
-    N = length(x);
-    sx = zeros(N,1);
-    if m > 0
-        if m < N
-            sx(1+m:end) = x(1:end-m);
-        end
-    elseif m < 0
-        m2 = -m;
-        if m2 < N
-            sx(1:end-m2) = x(1+m2:end);
-        end
-    else
-        sx = x;
-    end
-end
-
-function [y_proj, u_star] = project_geq_complex(y_hat_vec, u_hat)
-    y_hat_vec = y_hat_vec(:);
-    r = abs(y_hat_vec);
-    n = numel(r);
-    [rs,~] = sort(r, 'ascend');
-    rs = [rs; inf];
-    csum = [0; cumsum(rs(1:n))];
-
-    best_f = inf;
-    u_star = max(u_hat,0);
-    for k = 0:n
-        lb = 0;
-        ub = inf;
-        if k >= 1, lb = rs(k); end
-        if k < n, ub = rs(k+1); end
-        u_cand = (csum(k+1) + u_hat) / (k + 1);
-        u_cand = min(max(u_cand, lb), ub);
-        f = sum((max(r, u_cand) - r).^2) + (u_cand - u_hat).^2;
-        if f < best_f
-            best_f = f;
-            u_star = u_cand;
-        end
-    end
-    u_star = max(real(u_star), 0);
-    y_proj = max(r, u_star) .* exp(1j*angle(y_hat_vec));
-end
-
-function [z_proj, v_star] = project_leq_complex(z_hat_vec, v_hat)
-    z_hat_vec = z_hat_vec(:);
-    r = abs(z_hat_vec);
-    n = numel(r);
-    [rd,~] = sort(r, 'descend');
-    rd = [rd; 0];
-    csum = [0; cumsum(rd(1:n))];
-
-    best_f = inf;
-    v_star = max(v_hat,0);
-    for k = 0:n
-        ub = inf;
-        lb = 0;
-        if k >= 1, ub = rd(k); end
-        if k < n, lb = rd(k+1); end
-        v_cand = (csum(k+1) + v_hat) / (k + 1);
-        v_cand = min(max(v_cand, lb), ub);
-        f = sum((min(r, v_cand) - r).^2) + (v_cand - v_hat).^2;
-        if f < best_f
-            best_f = f;
-            v_star = v_cand;
-        end
-    end
-    v_star = max(real(v_star), 0);
-    z_proj = min(r, v_star) .* exp(1j*angle(z_hat_vec));
-end
-
-function [u_bar, v_bar] = update_uvbar_cubic(u, v, theta, zeta, rho)
-    cu = real(u + theta/rho);
-    cv = real(v + zeta/rho);
-
-    % paper-style cubic surrogate on v_bar
-    alpha = max(cu, eps);
-    eta = max(u, eps);
-    % rho*v^3 + (-rho*cv + 1/alpha)*v^2 - eta = 0
-    coeff = [rho, (-rho*cv + 1/alpha), 0, -eta];
-    roots_v = roots(coeff);
-    cand_v = real(roots_v(abs(imag(roots_v)) < 1e-8));
-    cand_v = cand_v(cand_v >= 0);
-    cand_v = unique([cand_v; max(cv,0); 0]);
-
-    best_cost = inf;
-    v_bar = max(cv,0);
-    u_bar = max(cu,eps);
-    for i = 1:numel(cand_v)
-        v_try = cand_v(i);
-        u_try = max(cu + (v_try - cv), eps);
-        cost = v_try/max(u_try,eps) + (rho/2)*(u_try-cu)^2 + (rho/2)*(v_try-cv)^2;
-        if cost < best_cost
-            best_cost = cost;
-            v_bar = v_try;
-            u_bar = u_try;
-        end
-    end
-end
-
-function [w_new, solver_name] = update_w_qcqp(a0, am_mat, y, z, lambda, kappa, x, tau, rho, w_init)
-    N = length(x);
-    Rm = rho * (a0*a0' + am_mat*am_mat') + 1e-8*eye(N);
-    rvec = -rho * (a0*(y + lambda/rho) + am_mat*(z + kappa/rho));
-
-    if exist('cvx_begin', 'file') == 2
-        solver_name = 'cvx';
-        cvx_begin quiet
-            variable w_cvx(N) complex
-            minimize( quad_form(w_cvx, Rm) + 2*real(rvec' * w_cvx) )
-            subject to
-                norm( x .* (w_cvx - ones(N,1)), 2 ) <= tau
-        cvx_end
-        w_new = w_cvx;
-        return;
-    end
-
-    if exist('fmincon','file') == 2
-        solver_name = 'fmincon';
-        w0 = [real(w_init); imag(w_init)];
-        obj = @(wr) wr_obj_qcqp(wr, Rm, rvec, N);
-        nonl = @(wr) wr_nonl_qcqp(wr, x, tau, N);
-        opts = optimoptions('fmincon','Display','off','Algorithm','interior-point',...
-            'MaxFunctionEvaluations',4000,'OptimalityTolerance',1e-6,'StepTolerance',1e-8);
-        wr = fmincon(obj, w0, [], [], [], [], [], [], nonl, opts);
-        w_new = wr(1:N) + 1j*wr(N+1:end);
-        return;
-    end
-
-    solver_name = 'proj-grad';
-    w_new = w_init;
-    L = max(real(eig((Rm+Rm')/2)));
-    if ~isfinite(L) || L <= 0, L = 1; end
-    step = 1/L;
-    for it = 1:250
-        g = 2*(Rm*w_new + rvec);
-        w_new = w_new - step*g;
-        d = x .* (w_new - 1);
-        nd = norm(d,2);
-        if nd > tau
-            d = d * (tau/nd);
-            w_new = 1 + d ./ (x + (abs(x)<eps).*eps);
-        end
-    end
-end
-
-function f = wr_obj_qcqp(wr, Rm, rvec, N)
-    w = wr(1:N) + 1j*wr(N+1:end);
-    f = real(w' * Rm * w + 2*real(rvec' * w));
-end
-
-function [c, ceq] = wr_nonl_qcqp(wr, x, tau, N)
-    w = wr(1:N) + 1j*wr(N+1:end);
-    c = norm(x .* (w - ones(N,1)), 2) - tau;
-    ceq = [];
+    out.W_pm1 = ifftshift(W1c);
+    out.W_pm2 = ifftshift(W2c);
+    out.W_pm3 = ifftshift(W3c);
 end
