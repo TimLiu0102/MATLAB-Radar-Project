@@ -176,14 +176,18 @@ fprintf('=======================================================================
 %% ========================================================================
 params_alg2 = struct();
 params_alg2.rho = 0.01;
-params_alg2.Tmax = 4500;
+params_alg2.Tmax = 800;
 params_alg2.psi = 1e-4;
 params_alg2.tau = 1.9;
 params_alg2.seed = 80;
+params_alg2.solver_preference = 'proj-grad';
+params_alg2.verbose_every = 100;
+params_alg2.patience = 120;
+params_alg2.min_obj_improve = 1e-5;
 
 % tau 自动扫（粗扫）
-tau_list = [1.2, 1.5, 1.9, 2.3, 2.8];
-coarse_tmax = 1500;
+tau_list = [1.5, 1.9, 2.3];
+coarse_tmax = 300;
 
 alg2_stats = struct('tau', cell(numel(tau_list),1), 'pslr', [], 'mw', [], 'papr', [], 'w', []);
 for i_tau = 1:numel(tau_list)
@@ -240,6 +244,7 @@ fprintf('Legendre (W_opt)\t%.2f\t\t%.2e\t%.2f\n', PSLR_opt, MW_opt, PAPR_opt);
 fprintf('Wang Alg2\t\t%.2f\t\t%.2e\t%.2f\n', PSLR_alg2, MW_alg2, PAPR_alg2);
 fprintf('Hamming baseline\t%.2f\t\t%.2e\t%.2f\n', PSLR_hamming_ref, MW_hamming_ref, PAPR_hamming_ref);
 fprintf('Alg2 iterations = %d, final residual = %.3e\n', info_alg2.iters, info_alg2.history.residual(end));
+fprintf('Alg2 w-update solver = %s\n', info_alg2.solver_name);
 fprintf('=======================================================================\n');
 
 %% ========================================================================
@@ -433,6 +438,10 @@ function [w_alg2, info] = design_window_alg2_wang2023(s_LFM, params)
     if ~isfield(params,'psi'), params.psi = 1e-4; end
     if ~isfield(params,'tau'), params.tau = 1.9; end
     if ~isfield(params,'seed'), params.seed = 80; end
+    if ~isfield(params,'solver_preference'), params.solver_preference = 'proj-grad'; end
+    if ~isfield(params,'verbose_every'), params.verbose_every = 0; end
+    if ~isfield(params,'patience'), params.patience = 120; end
+    if ~isfield(params,'min_obj_improve'), params.min_obj_improve = 1e-5; end
 
     rng(params.seed);
     x = s_LFM(:);
@@ -489,7 +498,7 @@ function [w_alg2, info] = design_window_alg2_wang2023(s_LFM, params)
         [u_bar, v_bar] = update_uvbar_cubic(u, v, theta, zeta, rho);
 
         % Step-3: w update (QCQP with similarity constraint)
-        [w, ~] = update_w_qcqp(a0, am_mat, y, z, lambda, kappa, x, params.tau, rho, w);
+        [w, solver_name] = update_w_qcqp(a0, am_mat, y, z, lambda, kappa, x, params.tau, rho, w, params.solver_preference);
 
         % Dual updates
         ry = y - (w' * a0);
@@ -511,6 +520,18 @@ function [w_alg2, info] = design_window_alg2_wang2023(s_LFM, params)
         history.u(it) = real(u_bar);
         history.v(it) = real(v_bar);
 
+        if params.verbose_every > 0 && (it == 1 || mod(it, params.verbose_every) == 0)
+            fprintf('[Alg2] it=%4d residual=%.3e obj=%.6f solver=%s\n', it, residual, history.obj(it), solver_name);
+        end
+
+        if it > params.patience
+            recent_best = min(history.obj(it-params.patience+1:it));
+            prev_best = min(history.obj(1:it-params.patience));
+            if prev_best - recent_best < params.min_obj_improve
+                break;
+            end
+        end
+
         if residual <= psi
             break;
         end
@@ -523,6 +544,7 @@ function [w_alg2, info] = design_window_alg2_wang2023(s_LFM, params)
 
     w_alg2 = w;
     info.iters = it;
+    info.solver_name = solver_name;
     info.Omega_m = Omega_m;
     info.history = history;
 end
@@ -668,12 +690,18 @@ function [u_bar, v_bar] = update_uvbar_cubic(u, v, theta, zeta, rho)
     end
 end
 
-function [w_new, solver_name] = update_w_qcqp(a0, am_mat, y, z, lambda, kappa, x, tau, rho, w_init)
+function [w_new, solver_name] = update_w_qcqp(a0, am_mat, y, z, lambda, kappa, x, tau, rho, w_init, solver_preference)
     N = length(x);
     Rm = rho * (a0*a0' + am_mat*am_mat') + 1e-8*eye(N);
     rvec = -rho * (a0*(y + lambda/rho) + am_mat*(z + kappa/rho));
 
-    if exist('cvx_begin', 'file') == 2
+    if nargin < 11 || isempty(solver_preference)
+        solver_preference = 'proj-grad';
+    end
+    use_cvx = strcmpi(solver_preference, 'cvx') || strcmpi(solver_preference, 'auto');
+    use_fmincon = strcmpi(solver_preference, 'fmincon') || strcmpi(solver_preference, 'auto');
+
+    if use_cvx && exist('cvx_begin', 'file') == 2
         solver_name = 'cvx';
         cvx_begin quiet
             variable w_cvx(N) complex
@@ -685,7 +713,7 @@ function [w_new, solver_name] = update_w_qcqp(a0, am_mat, y, z, lambda, kappa, x
         return;
     end
 
-    if exist('fmincon','file') == 2
+    if use_fmincon && exist('fmincon','file') == 2
         solver_name = 'fmincon';
         w0 = [real(w_init); imag(w_init)];
         obj = @(wr) wr_obj_qcqp(wr, Rm, rvec, N);
@@ -704,12 +732,19 @@ function [w_new, solver_name] = update_w_qcqp(a0, am_mat, y, z, lambda, kappa, x
     step = 1/L;
     for it = 1:250
         g = 2*(Rm*w_new + rvec);
+        if norm(g,2) < 1e-6
+            break;
+        end
+        w_prev = w_new;
         w_new = w_new - step*g;
         d = x .* (w_new - 1);
         nd = norm(d,2);
         if nd > tau
             d = d * (tau/nd);
             w_new = 1 + d ./ (x + (abs(x)<eps).*eps);
+        end
+        if norm(w_new - w_prev,2) < 1e-8 * max(1,norm(w_prev,2))
+            break;
         end
     end
 end
