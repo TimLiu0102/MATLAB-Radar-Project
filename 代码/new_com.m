@@ -180,7 +180,7 @@ params_alg2.Tmax = 800;
 params_alg2.psi = 1e-4;
 params_alg2.tau = 1.9;
 params_alg2.seed = 80;
-params_alg2.solver_preference = 'auto';
+params_alg2.solver_preference = 'proj-grad';
 params_alg2.verbose_every = 0;
 
 % tau 自动扫（粗扫）
@@ -491,7 +491,7 @@ function [w_alg2, info] = design_window_alg2_wang2023(s_LFM, params)
     if ~isfield(params,'psi'), params.psi = 1e-4; end
     if ~isfield(params,'tau'), params.tau = 1.9; end
     if ~isfield(params,'seed'), params.seed = 80; end
-    if ~isfield(params,'solver_preference'), params.solver_preference = 'auto'; end
+    if ~isfield(params,'solver_preference'), params.solver_preference = 'proj-grad'; end
     if ~isfield(params,'verbose_every'), params.verbose_every = 0; end
 
     rng(params.seed);
@@ -548,8 +548,8 @@ function [w_alg2, info] = design_window_alg2_wang2023(s_LFM, params)
         y = y_vec(1);
         [z, v] = project_leq_complex(z_hat, v_hat);
 
-        % Step-2: (u_bar,v_bar) update via 1D minimization (paper-consistent surrogate)
-        [u_bar, v_bar] = update_uvbar_1d(u, v, theta, zeta, rho);
+        % Step-2: (u_bar,v_bar) update via fast cubic-candidate selection (with 1D fallback)
+        [u_bar, v_bar] = update_uvbar_fast(u, v, theta, zeta, rho);
 
         % Step-3: w update (QCQP with similarity constraint)
         [w, solver_name] = update_w_qcqp(a0, am_mat, y, z, lambda, kappa, x, params.tau, rho, w, params.solver_preference, qcqp_cache);
@@ -707,37 +707,57 @@ function [z_proj, v_star] = project_leq_complex(z_hat_vec, v_hat)
     z_proj = min(r, v_star) .* exp(1j*angle(z_hat_vec));
 end
 
-function [u_bar, v_bar] = update_uvbar_1d(u, v, theta, zeta, rho)
+function [u_bar, v_bar] = update_uvbar_fast(u, v, theta, zeta, rho)
     cu = real(u + theta/rho);
     cv = real(v + zeta/rho);
 
-    % Step-2 数值稳健实现：在 v_bar>=0 上做一维搜索，回代 u_bar
-    % 目标：phi(v_bar)=v_bar/u_bar + (rho/2)(u_bar-cu)^2 + (rho/2)(v_bar-cv)^2
-    % 且满足一阶关系 u_bar-v_bar = cu-cv
-    delta = cu - cv;
-    lb = max(0, -delta + eps);
-    ub = max([lb + 1, cv + 5*max(1, abs(cv)), abs(v) + 5]);
+    % 快速版本：优先使用三次方程实根候选（闭式思路），仅在异常时回退到1D搜索
+    alpha = max(cu, eps);
+    eta = max(real(u), eps);
+    coeff = [rho, (-rho*cv + 1/alpha), 0, -eta];
+    roots_v = roots(coeff);
+    cand_v = real(roots_v(abs(imag(roots_v)) < 1e-8));
+    cand_v = cand_v(cand_v >= 0);
+    cand_v = unique([cand_v; max(cv,0); 0]);
 
-    obj_v = @(vb) vb./max(vb + delta, eps) + ...
-        (rho/2)*(max(vb + delta, eps)-cu).^2 + (rho/2)*(vb-cv).^2;
-
-    if exist('fminbnd','file') == 2
-        [v_bar, ~] = fminbnd(obj_v, lb, ub);
-    else
-        grid_v = linspace(lb, ub, 400);
-        [~, idx_best] = min(obj_v(grid_v));
-        v_bar = grid_v(idx_best);
+    best_cost = inf;
+    v_bar = max(cv, 0);
+    u_bar = max(cu, eps);
+    for i = 1:numel(cand_v)
+        v_try = cand_v(i);
+        u_try = max(cu + (v_try - cv), eps);
+        cost = v_try/max(u_try,eps) + (rho/2)*(u_try-cu)^2 + (rho/2)*(v_try-cv)^2;
+        if isfinite(cost) && cost < best_cost
+            best_cost = cost;
+            v_bar = v_try;
+            u_bar = u_try;
+        end
     end
 
-    v_bar = max(real(v_bar), 0);
-    u_bar = max(v_bar + delta, eps);
+    % 数值回退：仅在候选根不可用时才进行1D搜索（避免每轮 fminbnd）
+    if ~isfinite(best_cost)
+        delta = cu - cv;
+        lb = max(0, -delta + eps);
+        ub = max([lb + 1, cv + 5*max(1, abs(cv)), abs(v) + 5]);
+        obj_v = @(vb) vb./max(vb + delta, eps) + ...
+            (rho/2)*(max(vb + delta, eps)-cu).^2 + (rho/2)*(vb-cv).^2;
+        if exist('fminbnd','file') == 2
+            [v_bar, ~] = fminbnd(obj_v, lb, ub);
+        else
+            grid_v = linspace(lb, ub, 200);
+            [~, idx_best] = min(obj_v(grid_v));
+            v_bar = grid_v(idx_best);
+        end
+        v_bar = max(real(v_bar), 0);
+        u_bar = max(v_bar + delta, eps);
+    end
 end
 
 function [w_new, solver_name] = update_w_qcqp(a0, am_mat, y, z, lambda, kappa, x, tau, rho, w_init, solver_preference, qcqp_cache)
     N = length(x);
 
     if nargin < 11 || isempty(solver_preference)
-        solver_preference = 'auto';
+        solver_preference = 'proj-grad';
     end
     if nargin < 12 || isempty(qcqp_cache)
         qcqp_cache = prepare_w_qcqp_cache(a0, am_mat, rho);
@@ -793,6 +813,30 @@ function [w_new, solver_name] = update_w_qcqp(a0, am_mat, y, z, lambda, kappa, x
             break;
         end
     end
+end
+
+
+function cache = prepare_w_qcqp_cache(a0, am_mat, rho)
+    N = length(a0);
+    Rm = rho * (a0*a0' + am_mat*am_mat') + 1e-8*eye(N);
+
+    % 用幂迭代估计 Lipschitz 常数，避免每次 w 更新都调用 eig(O(N^3))
+    v = ones(N,1) / sqrt(N);
+    for k = 1:20
+        v = Rm * v;
+        nv = norm(v,2);
+        if nv <= eps
+            break;
+        end
+        v = v / nv;
+    end
+    L = real(v' * Rm * v);
+    if ~isfinite(L) || L <= 0
+        L = 1;
+    end
+
+    cache.Rm = Rm;
+    cache.L = L;
 end
 
 
