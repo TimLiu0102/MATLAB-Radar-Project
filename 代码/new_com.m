@@ -516,6 +516,9 @@ function [w_alg2, info] = design_window_alg2_wang2023(s_LFM, params)
     rho = params.rho;
     psi = params.psi;
 
+    % 性能优化：Rm 与其步长估计在整个 ADMM 迭代中不变，提前缓存避免每轮重复构造/谱分解
+    qcqp_cache = prepare_w_qcqp_cache(a0, am_mat, rho);
+
     w = ones(N,1);
     y = w' * a0;
     z = (w' * am_mat).';
@@ -549,7 +552,7 @@ function [w_alg2, info] = design_window_alg2_wang2023(s_LFM, params)
         [u_bar, v_bar] = update_uvbar_1d(u, v, theta, zeta, rho);
 
         % Step-3: w update (QCQP with similarity constraint)
-        [w, solver_name] = update_w_qcqp(a0, am_mat, y, z, lambda, kappa, x, params.tau, rho, w, params.solver_preference);
+        [w, solver_name] = update_w_qcqp(a0, am_mat, y, z, lambda, kappa, x, params.tau, rho, w, params.solver_preference, qcqp_cache);
 
         % Dual updates
         ry = y - (w' * a0);
@@ -730,14 +733,19 @@ function [u_bar, v_bar] = update_uvbar_1d(u, v, theta, zeta, rho)
     u_bar = max(v_bar + delta, eps);
 end
 
-function [w_new, solver_name] = update_w_qcqp(a0, am_mat, y, z, lambda, kappa, x, tau, rho, w_init, solver_preference)
+function [w_new, solver_name] = update_w_qcqp(a0, am_mat, y, z, lambda, kappa, x, tau, rho, w_init, solver_preference, qcqp_cache)
     N = length(x);
-    Rm = rho * (a0*a0' + am_mat*am_mat') + 1e-8*eye(N);
-    rvec = -rho * (a0*(y + lambda/rho) + am_mat*(z + kappa/rho));
 
     if nargin < 11 || isempty(solver_preference)
         solver_preference = 'auto';
     end
+    if nargin < 12 || isempty(qcqp_cache)
+        qcqp_cache = prepare_w_qcqp_cache(a0, am_mat, rho);
+    end
+
+    Rm = qcqp_cache.Rm;
+    L = qcqp_cache.L;
+    rvec = -rho * (a0*(y + lambda/rho) + am_mat*(z + kappa/rho));
     use_cvx = strcmpi(solver_preference, 'cvx') || strcmpi(solver_preference, 'auto');
     use_fmincon = strcmpi(solver_preference, 'fmincon') || strcmpi(solver_preference, 'auto');
 
@@ -767,9 +775,7 @@ function [w_new, solver_name] = update_w_qcqp(a0, am_mat, y, z, lambda, kappa, x
 
     solver_name = 'proj-grad';
     w_new = w_init;
-    L = max(real(eig((Rm+Rm')/2)));
-    if ~isfinite(L) || L <= 0, L = 1; end
-    step = 1/L;
+    step = 1/max(L, eps);
     for it = 1:250
         g = 2*(Rm*w_new + rvec);
         if norm(g,2) < 1e-6
@@ -787,6 +793,30 @@ function [w_new, solver_name] = update_w_qcqp(a0, am_mat, y, z, lambda, kappa, x
             break;
         end
     end
+end
+
+
+function cache = prepare_w_qcqp_cache(a0, am_mat, rho)
+    N = length(a0);
+    Rm = rho * (a0*a0' + am_mat*am_mat') + 1e-8*eye(N);
+
+    % 用幂迭代估计 Lipschitz 常数，避免每次 w 更新都调用 eig(O(N^3))
+    v = ones(N,1) / sqrt(N);
+    for k = 1:20
+        v = Rm * v;
+        nv = norm(v,2);
+        if nv <= eps
+            break;
+        end
+        v = v / nv;
+    end
+    L = real(v' * Rm * v);
+    if ~isfinite(L) || L <= 0
+        L = 1;
+    end
+
+    cache.Rm = Rm;
+    cache.L = L;
 end
 
 function f = wr_obj_qcqp(wr, Rm, rvec, N)
