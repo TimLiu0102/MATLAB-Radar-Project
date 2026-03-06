@@ -176,7 +176,7 @@ fprintf('=======================================================================
 %% ========================================================================
 params_alg2 = struct();
 params_alg2.rho = 0.01;
-params_alg2.Tmax = 4500;
+params_alg2.Tmax = 800;
 params_alg2.psi = 1e-4;
 params_alg2.tau = 1.9;
 params_alg2.seed = 80;
@@ -184,8 +184,8 @@ params_alg2.solver_preference = 'proj-grad';
 params_alg2.verbose_every = 0;
 
 % tau 自动扫（粗扫）
-tau_list = [1.2, 1.5, 1.9, 2.3, 2.8];
-coarse_tmax = 1500;
+tau_list = [1.5, 1.9, 2.3];
+coarse_tmax = 300;
 
 alg2_stats = struct('tau', cell(numel(tau_list),1), 'pslr', [], 'mw', [], 'papr', [], 'w', []);
 for i_tau = 1:numel(tau_list)
@@ -813,6 +813,30 @@ function [w_new, solver_name] = update_w_qcqp(a0, am_mat, y, z, lambda, kappa, x
             break;
         end
     end
+end
+
+
+function cache = prepare_w_qcqp_cache(a0, am_mat, rho)
+    N = length(a0);
+    Rm = rho * (a0*a0' + am_mat*am_mat') + 1e-8*eye(N);
+
+    % 用幂迭代估计 Lipschitz 常数，避免每次 w 更新都调用 eig(O(N^3))
+    v = ones(N,1) / sqrt(N);
+    for k = 1:20
+        v = Rm * v;
+        nv = norm(v,2);
+        if nv <= eps
+            break;
+        end
+        v = v / nv;
+    end
+    L = real(v' * Rm * v);
+    if ~isfinite(L) || L <= 0
+        L = 1;
+    end
+
+    cache.Rm = Rm;
+    cache.L = L;
 end
 
 
