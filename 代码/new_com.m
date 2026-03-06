@@ -846,30 +846,6 @@ function cache = prepare_w_qcqp_cache_alg2(a0, am_mat, rho)
 end
 
 
-function cache = prepare_w_qcqp_cache_alg2(a0, am_mat, rho)
-    N = length(a0);
-    Rm = rho * (a0*a0' + am_mat*am_mat') + 1e-8*eye(N);
-
-    % 用幂迭代估计 Lipschitz 常数，避免每次 w 更新都调用 eig(O(N^3))
-    v = ones(N,1) / sqrt(N);
-    for k = 1:20
-        v = Rm * v;
-        nv = norm(v,2);
-        if nv <= eps
-            break;
-        end
-        v = v / nv;
-    end
-    L = real(v' * Rm * v);
-    if ~isfinite(L) || L <= 0
-        L = 1;
-
-    end
-
-    cache.Rm = Rm;
-    cache.L = L;
-end
-
 
 function cache = prepare_w_qcqp_cache(a0, am_mat, rho)
     N = length(a0);
