@@ -180,10 +180,8 @@ params_alg2.Tmax = 800;
 params_alg2.psi = 1e-4;
 params_alg2.tau = 1.9;
 params_alg2.seed = 80;
-params_alg2.solver_preference = 'proj-grad';
-params_alg2.verbose_every = 100;
-params_alg2.patience = 120;
-params_alg2.min_obj_improve = 1e-5;
+params_alg2.solver_preference = 'auto';
+params_alg2.verbose_every = 0;
 
 % tau 自动扫（粗扫）
 tau_list = [1.5, 1.9, 2.3];
@@ -493,10 +491,8 @@ function [w_alg2, info] = design_window_alg2_wang2023(s_LFM, params)
     if ~isfield(params,'psi'), params.psi = 1e-4; end
     if ~isfield(params,'tau'), params.tau = 1.9; end
     if ~isfield(params,'seed'), params.seed = 80; end
-    if ~isfield(params,'solver_preference'), params.solver_preference = 'proj-grad'; end
+    if ~isfield(params,'solver_preference'), params.solver_preference = 'auto'; end
     if ~isfield(params,'verbose_every'), params.verbose_every = 0; end
-    if ~isfield(params,'patience'), params.patience = 120; end
-    if ~isfield(params,'min_obj_improve'), params.min_obj_improve = 1e-5; end
 
     rng(params.seed);
     x = s_LFM(:);
@@ -549,8 +545,8 @@ function [w_alg2, info] = design_window_alg2_wang2023(s_LFM, params)
         y = y_vec(1);
         [z, v] = project_leq_complex(z_hat, v_hat);
 
-        % Step-2: (u_bar,v_bar) update via cubic-root selection (paper-style surrogate)
-        [u_bar, v_bar] = update_uvbar_cubic(u, v, theta, zeta, rho);
+        % Step-2: (u_bar,v_bar) update via 1D minimization (paper-consistent surrogate)
+        [u_bar, v_bar] = update_uvbar_1d(u, v, theta, zeta, rho);
 
         % Step-3: w update (QCQP with similarity constraint)
         [w, solver_name] = update_w_qcqp(a0, am_mat, y, z, lambda, kappa, x, params.tau, rho, w, params.solver_preference);
@@ -576,15 +572,7 @@ function [w_alg2, info] = design_window_alg2_wang2023(s_LFM, params)
         history.v(it) = real(v_bar);
 
         if params.verbose_every > 0 && (it == 1 || mod(it, params.verbose_every) == 0)
-            fprintf('[Alg2] it=%4d residual=%.3e obj=%.6f solver=%s\n', it, residual, history.obj(it), solver_name);
-        end
-
-        if it > params.patience
-            recent_best = min(history.obj(it-params.patience+1:it));
-            prev_best = min(history.obj(1:it-params.patience));
-            if prev_best - recent_best < params.min_obj_improve
-                break;
-            end
+            fprintf('[Alg2] it=%4d residual=%.3e v/u=%.6f solver=%s\n', it, residual, history.obj(it), solver_name);
         end
 
         if residual <= psi
@@ -716,33 +704,30 @@ function [z_proj, v_star] = project_leq_complex(z_hat_vec, v_hat)
     z_proj = min(r, v_star) .* exp(1j*angle(z_hat_vec));
 end
 
-function [u_bar, v_bar] = update_uvbar_cubic(u, v, theta, zeta, rho)
+function [u_bar, v_bar] = update_uvbar_1d(u, v, theta, zeta, rho)
     cu = real(u + theta/rho);
     cv = real(v + zeta/rho);
 
-    % paper-style cubic surrogate on v_bar
-    alpha = max(cu, eps);
-    eta = max(u, eps);
-    % rho*v^3 + (-rho*cv + 1/alpha)*v^2 - eta = 0
-    coeff = [rho, (-rho*cv + 1/alpha), 0, -eta];
-    roots_v = roots(coeff);
-    cand_v = real(roots_v(abs(imag(roots_v)) < 1e-8));
-    cand_v = cand_v(cand_v >= 0);
-    cand_v = unique([cand_v; max(cv,0); 0]);
+    % Step-2 数值稳健实现：在 v_bar>=0 上做一维搜索，回代 u_bar
+    % 目标：phi(v_bar)=v_bar/u_bar + (rho/2)(u_bar-cu)^2 + (rho/2)(v_bar-cv)^2
+    % 且满足一阶关系 u_bar-v_bar = cu-cv
+    delta = cu - cv;
+    lb = max(0, -delta + eps);
+    ub = max([lb + 1, cv + 5*max(1, abs(cv)), abs(v) + 5]);
 
-    best_cost = inf;
-    v_bar = max(cv,0);
-    u_bar = max(cu,eps);
-    for i = 1:numel(cand_v)
-        v_try = cand_v(i);
-        u_try = max(cu + (v_try - cv), eps);
-        cost = v_try/max(u_try,eps) + (rho/2)*(u_try-cu)^2 + (rho/2)*(v_try-cv)^2;
-        if cost < best_cost
-            best_cost = cost;
-            v_bar = v_try;
-            u_bar = u_try;
-        end
+    obj_v = @(vb) vb./max(vb + delta, eps) + ...
+        (rho/2)*(max(vb + delta, eps)-cu).^2 + (rho/2)*(vb-cv).^2;
+
+    if exist('fminbnd','file') == 2
+        [v_bar, ~] = fminbnd(obj_v, lb, ub);
+    else
+        grid_v = linspace(lb, ub, 400);
+        [~, idx_best] = min(obj_v(grid_v));
+        v_bar = grid_v(idx_best);
     end
+
+    v_bar = max(real(v_bar), 0);
+    u_bar = max(v_bar + delta, eps);
 end
 
 function [w_new, solver_name] = update_w_qcqp(a0, am_mat, y, z, lambda, kappa, x, tau, rho, w_init, solver_preference)
@@ -751,7 +736,7 @@ function [w_new, solver_name] = update_w_qcqp(a0, am_mat, y, z, lambda, kappa, x
     rvec = -rho * (a0*(y + lambda/rho) + am_mat*(z + kappa/rho));
 
     if nargin < 11 || isempty(solver_preference)
-        solver_preference = 'proj-grad';
+        solver_preference = 'auto';
     end
     use_cvx = strcmpi(solver_preference, 'cvx') || strcmpi(solver_preference, 'auto');
     use_fmincon = strcmpi(solver_preference, 'fmincon') || strcmpi(solver_preference, 'auto');
