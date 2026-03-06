@@ -248,6 +248,61 @@ fprintf('Alg2 w-update solver = %s\n', info_alg2.solver_name);
 fprintf('=======================================================================\n');
 
 %% ========================================================================
+%  算法对比图：窗函数频谱图 / 自相关函数图 / 主瓣范围自相关图
+%% ========================================================================
+W_legendre_center = fftshift(W_opt);
+W_alg2_center = fftshift(W_alg2_freq);
+W_hamming_center = fftshift(W_hamming_ref);
+
+% 图1：窗函数频谱图（dB）
+figure(1);
+f_MHz = f / 1e6;
+plot(f_MHz, 20*log10(abs(W_legendre_center)+eps), 'g-', 'LineWidth', 1.6); hold on;
+plot(f_MHz, 20*log10(abs(W_alg2_center)+eps), 'b-.', 'LineWidth', 1.4);
+plot(f_MHz, 20*log10(abs(W_hamming_center)+eps), 'r--', 'LineWidth', 1.3);
+xlabel('Frequency (MHz)'); ylabel('Magnitude (dB)');
+legend('Legendre (W_{opt})', 'Wang Alg2', 'Hamming', 'Location', 'best');
+grid on;
+
+S_lfm = abs(fftshift(fft(s_LFM)));
+[~, idx_pk_spec] = max(S_lfm);
+th_spec = max(S_lfm) * 10^(-3/20);
+left_spec = find(S_lfm(1:idx_pk_spec) < th_spec, 1, 'last');
+if isempty(left_spec), left_spec = 1; end
+right_rel_spec = find(S_lfm(idx_pk_spec:end) < th_spec, 1, 'first');
+if isempty(right_rel_spec), right_spec = length(S_lfm); else, right_spec = idx_pk_spec + right_rel_spec - 1; end
+xlim([f(left_spec), f(right_spec)] / 1e6);
+ylim([-80, 5]);
+
+% 图2：自相关函数图（dB）
+[R_lfm, lag] = xcorr(s_LFM);
+R_lfm = safe_normalize(abs(R_lfm));
+
+figure(2);
+plot(lag/fs*1e6, 20*log10(R_lfm+eps), 'k-', 'LineWidth', 1.2); hold on;
+plot(lag_opt/fs*1e6, 20*log10(R_opt+eps), 'g-', 'LineWidth', 1.6);
+plot(lag_alg2/fs*1e6, 20*log10(R_alg2+eps), 'b-.', 'LineWidth', 1.4);
+plot(lag_hamming_ref/fs*1e6, 20*log10(R_hamming_ref+eps), 'r--', 'LineWidth', 1.3);
+xlabel('Time (us)'); ylabel('Normalized Magnitude (dB)');
+legend('Original LFM', 'Legendre (W_{opt})', 'Wang Alg2', 'Hamming', 'Location', 'best');
+grid on; xlim([-0.5 0.5]); ylim([-80 5]);
+
+% 图3：主瓣范围内自相关函数图（线性幅度）
+[~, idx_peak] = max(R_lfm);
+half_width = 60;
+range_idx = max(1, idx_peak-half_width) : min(length(R_lfm), idx_peak+half_width);
+t_corr = lag / fs * 1e6;
+
+figure(3);
+plot(t_corr(range_idx), R_lfm(range_idx), 'k-', 'LineWidth', 1.2); hold on;
+plot(t_corr(range_idx), R_opt(range_idx), 'g-', 'LineWidth', 1.6);
+plot(t_corr(range_idx), R_alg2(range_idx), 'b-.', 'LineWidth', 1.4);
+plot(t_corr(range_idx), R_hamming_ref(range_idx), 'r--', 'LineWidth', 1.3);
+xlabel('Delay (us)'); ylabel('Normalized Magnitude');
+legend('Original LFM', 'Legendre (W_{opt})', 'Wang Alg2', 'Hamming', 'Location', 'best');
+grid on;
+
+%% ========================================================================
 %  函数定义
 %% ========================================================================
 
