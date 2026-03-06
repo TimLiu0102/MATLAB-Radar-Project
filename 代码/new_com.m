@@ -176,7 +176,7 @@ fprintf('=======================================================================
 %% ========================================================================
 params_alg2 = struct();
 params_alg2.rho = 0.01;
-params_alg2.Tmax = 4500;
+params_alg2.Tmax = 800;
 params_alg2.psi = 1e-4;
 params_alg2.tau = 1.9;
 params_alg2.seed = 80;
@@ -184,8 +184,8 @@ params_alg2.solver_preference = 'auto';
 params_alg2.verbose_every = 0;
 
 % tau 自动扫（粗扫）
-tau_list = [1.2, 1.5, 1.9, 2.3, 2.8];
-coarse_tmax = 1500;
+tau_list = [1.5, 1.9, 2.3];
+coarse_tmax = 300;
 
 alg2_stats = struct('tau', cell(numel(tau_list),1), 'pslr', [], 'mw', [], 'papr', [], 'w', []);
 for i_tau = 1:numel(tau_list)
