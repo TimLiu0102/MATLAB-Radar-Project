@@ -624,8 +624,7 @@ function run_extended_experiments(cfg)
         'gamma', [0.5 1.0 1.8];
         'lambda_PSLR', [40 80 120];
         'lambda_MW', [4 7 10];
-        'lambda_PAPR', [5 8 11];
-        'PSLR_margin', [0.4 0.8 1.2 1.6]
+        'lambda_PAPR', [5 8 11]
     };
 
     figure('Name','Sensitivity Analysis');

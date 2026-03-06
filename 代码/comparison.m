@@ -156,11 +156,15 @@ end
 
 b_opt = b_refined;
 
-% 最终仅输出我方优化结果（无对比、无绘图）
+% 最终结果（文献窗对比信号将在后文统一生成）
 [W_opt, ~] = legendre_window(b_opt, fs, B, N);
 s_w_opt = ifft(fft(s_LFM) .* W_opt);
-[R_opt, lag_opt] = xcorr(s_w_opt);
+
+[R_lfm, lag_opt] = xcorr(s_LFM);
+R_lfm = safe_normalize(abs(R_lfm));
+[R_opt, ~] = xcorr(s_w_opt);
 R_opt = safe_normalize(abs(R_opt));
+
 [PSLR_opt, MW_opt, PAPR_opt] = compute_metrics_single(R_opt, lag_opt, s_w_opt);
 
 fprintf('\n=================== Optimized Legendre Window Result ===================\n');
@@ -237,6 +241,79 @@ for i = 1:numel(method_names)
     fprintf('%-14s\t%.2f\t\t%.2e\t%.2f\n', method_names{i}, metrics(i,1), metrics(i,2), metrics(i,3));
 end
 fprintf('================================================================================\n');
+
+% 文献窗与我方窗的对比对象（采用论文 PM3 版本）
+W_lit_n = W_N_PM3;
+W_lit_bh = W_BH_PM3;
+W_lit_bn = W_BN_PM3;
+
+s_lit_n = ifft(fft(s_LFM) .* W_lit_n);
+s_lit_bh = ifft(fft(s_LFM) .* W_lit_bh);
+s_lit_bn = ifft(fft(s_LFM) .* W_lit_bn);
+
+[R_lit_n, ~] = xcorr(s_lit_n);   R_lit_n = safe_normalize(abs(R_lit_n));
+[R_lit_bh, ~] = xcorr(s_lit_bh); R_lit_bh = safe_normalize(abs(R_lit_bh));
+[R_lit_bn, ~] = xcorr(s_lit_bn); R_lit_bn = safe_normalize(abs(R_lit_bn));
+
+%% ========================================================================
+%  图1：自相关函数对比图（dB）——文献窗 vs Proposed
+% =========================================================================
+figure(1);
+plot(lag_opt/fs*1e6, 20*log10(R_lfm+eps), 'k-', 'LineWidth', 1.2); hold on;
+plot(lag_opt/fs*1e6, 20*log10(R_opt+eps), 'g-', 'LineWidth', 1.6);
+plot(lag_opt/fs*1e6, 20*log10(R_lit_n+eps), 'r--', 'LineWidth', 1.2);
+plot(lag_opt/fs*1e6, 20*log10(R_lit_bh+eps), 'b-.', 'LineWidth', 1.2);
+plot(lag_opt/fs*1e6, 20*log10(R_lit_bn+eps), 'm:', 'LineWidth', 1.4);
+xlabel('Time (us)'); ylabel('Normalized Magnitude (dB)');
+legend('LFM','Proposed (Legendre)','Nuttall-PM3','BH-PM3','BN-PM3','Location','best');
+grid on; xlim([-0.5 0.5]); ylim([-80 5]);
+
+%% ========================================================================
+%  图2：主瓣区域放大对比图（线性幅度）——文献窗 vs Proposed
+% =========================================================================
+figure(2);
+[~, idx_peak] = max(R_lfm);
+half_width = 60;
+range_idx = max(1, idx_peak-half_width) : min(length(R_lfm), idx_peak+half_width);
+t_corr = lag_opt / fs * 1e6;
+
+plot(t_corr(range_idx), R_lfm(range_idx), 'k-', 'LineWidth', 1.2); hold on;
+plot(t_corr(range_idx), R_opt(range_idx), 'g-', 'LineWidth', 1.6);
+plot(t_corr(range_idx), R_lit_n(range_idx), 'r--', 'LineWidth', 1.2);
+plot(t_corr(range_idx), R_lit_bh(range_idx), 'b-.', 'LineWidth', 1.2);
+plot(t_corr(range_idx), R_lit_bn(range_idx), 'm:', 'LineWidth', 1.4);
+xlabel('Delay (us)'); ylabel('Normalized Magnitude');
+legend('Original LFM','Proposed (Legendre)','Nuttall-PM3','BH-PM3','BN-PM3','Location','best');
+grid on;
+
+%% ========================================================================
+%  图3：频域窗函数对比图（dB）——文献窗 vs Proposed
+% =========================================================================
+figure(3);
+f_MHz = f / 1e6;
+plot(f_MHz, 20*log10(abs(fftshift(W_opt))+eps), 'g-', 'LineWidth', 1.6); hold on;
+plot(f_MHz, 20*log10(abs(fftshift(W_lit_n))+eps), 'r--', 'LineWidth', 1.2);
+plot(f_MHz, 20*log10(abs(fftshift(W_lit_bh))+eps), 'b-.', 'LineWidth', 1.2);
+plot(f_MHz, 20*log10(abs(fftshift(W_lit_bn))+eps), 'm:', 'LineWidth', 1.4);
+xlabel('Frequency (MHz)'); ylabel('Magnitude (dB)');
+legend('Proposed (Legendre)','Nuttall-PM3','BH-PM3','BN-PM3','Location','best');
+grid on;
+
+S_lfm = abs(fftshift(fft(s_LFM)));
+[~, idx_pk_spec] = max(S_lfm);
+th_spec = max(S_lfm) * 10^(-3/20);
+left_spec = find(S_lfm(1:idx_pk_spec) < th_spec, 1, 'last');
+if isempty(left_spec)
+    left_spec = 1;
+end
+right_rel_spec = find(S_lfm(idx_pk_spec:end) < th_spec, 1, 'first');
+if isempty(right_rel_spec)
+    right_spec = length(S_lfm);
+else
+    right_spec = idx_pk_spec + right_rel_spec - 1;
+end
+xlim([f(left_spec), f(right_spec)] / 1e6);
+ylim([-80, 5]);
 
 %% ========================================================================
 %  函数定义
@@ -421,9 +498,6 @@ function [c, ceq] = compute_constraints_v2(b, s_LFM, fs, B, MW_target, PAPR_targ
     end
     ceq = [];
 end
-
-
-
 
 function W = build_freq_window_from_segment(w_seg, idx_band, N)
     W_centered = zeros(N,1);
