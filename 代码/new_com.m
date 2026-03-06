@@ -194,9 +194,10 @@ for i_tau = 1:numel(tau_list)
     params_tmp.Tmax = coarse_tmax;
     [w_tmp, info_tmp] = design_window_alg2_wang2023(s_LFM, params_tmp);
 
+    % Alg2 输出 w_tmp 为时域复权向量，直接作用于回波/匹配滤波模板
+    s_tmp = w_tmp .* s_LFM;
     W_tmp_freq = fft(w_tmp);
     W_tmp_freq = W_tmp_freq / (max(abs(W_tmp_freq)) + eps);
-    s_tmp = ifft(fft(s_LFM) .* W_tmp_freq);
     [R_tmp, lag_tmp] = xcorr(s_tmp);
     R_tmp = safe_normalize(abs(R_tmp));
     [pslr_tmp, mw_tmp, papr_tmp] = compute_metrics_single(R_tmp, lag_tmp, s_tmp);
@@ -228,9 +229,10 @@ end
 params_alg2.tau = alg2_stats(best_idx).tau;
 [w_alg2, info_alg2] = design_window_alg2_wang2023(s_LFM, params_alg2);
 
+% Alg2 输出 w_alg2 为时域复权向量，直接施加到 LFM
+s_alg2 = w_alg2 .* s_LFM;
 W_alg2_freq = fft(w_alg2);
 W_alg2_freq = W_alg2_freq / (max(abs(W_alg2_freq)) + eps);
-s_alg2 = ifft(fft(s_LFM) .* W_alg2_freq);
 [R_alg2, lag_alg2] = xcorr(s_alg2);
 R_alg2 = safe_normalize(abs(R_alg2));
 [PSLR_alg2, MW_alg2, PAPR_alg2] = compute_metrics_single(R_alg2, lag_alg2, s_alg2);
@@ -517,11 +519,9 @@ function [w_alg2, info] = design_window_alg2_wang2023(s_LFM, params)
     psi = params.psi;
 
     % 性能优化：Rm 与其步长估计在整个 ADMM 迭代中不变，提前缓存避免每轮重复构造/谱分解
-<<<<<<< codex/analyze-new_com.m-execution-issue-uyhb2v
     qcqp_cache = prepare_w_qcqp_cache_alg2(a0, am_mat, rho);
-=======
-    qcqp_cache = prepare_w_qcqp_cache(a0, am_mat, rho);
->>>>>>> main
+    qcqp_cache = prepare_w_qcqp_cache_alg2(a0, am_mat, rho);
+
 
     w = ones(N,1);
     y = w' * a0;
@@ -764,11 +764,9 @@ function [w_new, solver_name] = update_w_qcqp(a0, am_mat, y, z, lambda, kappa, x
         solver_preference = 'proj-grad';
     end
     if nargin < 12 || isempty(qcqp_cache)
-<<<<<<< codex/analyze-new_com.m-execution-issue-uyhb2v
         qcqp_cache = prepare_w_qcqp_cache_alg2(a0, am_mat, rho);
-=======
-        qcqp_cache = prepare_w_qcqp_cache(a0, am_mat, rho);
->>>>>>> main
+        qcqp_cache = prepare_w_qcqp_cache_alg2(a0, am_mat, rho);
+
     end
 
     Rm = qcqp_cache.Rm;
@@ -820,7 +818,6 @@ function [w_new, solver_name] = update_w_qcqp(a0, am_mat, y, z, lambda, kappa, x
         if norm(w_new - w_prev,2) < 1e-8 * max(1,norm(w_prev,2))
             break;
         end
-<<<<<<< codex/analyze-new_com.m-execution-issue-uyhb2v
     end
 end
 
@@ -842,8 +839,31 @@ function cache = prepare_w_qcqp_cache_alg2(a0, am_mat, rho)
     L = real(v' * Rm * v);
     if ~isfinite(L) || L <= 0
         L = 1;
-=======
->>>>>>> main
+    end
+
+    cache.Rm = Rm;
+    cache.L = L;
+end
+
+
+function cache = prepare_w_qcqp_cache_alg2(a0, am_mat, rho)
+    N = length(a0);
+    Rm = rho * (a0*a0' + am_mat*am_mat') + 1e-8*eye(N);
+
+    % 用幂迭代估计 Lipschitz 常数，避免每次 w 更新都调用 eig(O(N^3))
+    v = ones(N,1) / sqrt(N);
+    for k = 1:20
+        v = Rm * v;
+        nv = norm(v,2);
+        if nv <= eps
+            break;
+        end
+        v = v / nv;
+    end
+    L = real(v' * Rm * v);
+    if ~isfinite(L) || L <= 0
+        L = 1;
+
     end
 
     cache.Rm = Rm;
@@ -874,29 +894,6 @@ function cache = prepare_w_qcqp_cache(a0, am_mat, rho)
     cache.L = L;
 end
 
-
-function cache = prepare_w_qcqp_cache(a0, am_mat, rho)
-    N = length(a0);
-    Rm = rho * (a0*a0' + am_mat*am_mat') + 1e-8*eye(N);
-
-    % 用幂迭代估计 Lipschitz 常数，避免每次 w 更新都调用 eig(O(N^3))
-    v = ones(N,1) / sqrt(N);
-    for k = 1:20
-        v = Rm * v;
-        nv = norm(v,2);
-        if nv <= eps
-            break;
-        end
-        v = v / nv;
-    end
-    L = real(v' * Rm * v);
-    if ~isfinite(L) || L <= 0
-        L = 1;
-    end
-
-    cache.Rm = Rm;
-    cache.L = L;
-end
 
 function f = wr_obj_qcqp(wr, Rm, rvec, N)
     w = wr(1:N) + 1j*wr(N+1:end);
