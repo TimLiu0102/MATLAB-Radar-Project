@@ -180,6 +180,8 @@ params_alg2.Tmax = 4500;
 params_alg2.psi = 1e-4;
 params_alg2.tau = 1.9;
 params_alg2.seed = 80;
+params_alg2.solver_preference = 'proj-grad';
+params_alg2.verbose_every = 0;
 
 % tau 自动扫（粗扫）
 tau_list = [1.2, 1.5, 1.9, 2.3, 2.8];
@@ -192,9 +194,10 @@ for i_tau = 1:numel(tau_list)
     params_tmp.Tmax = coarse_tmax;
     [w_tmp, info_tmp] = design_window_alg2_wang2023(s_LFM, params_tmp);
 
+    % Alg2 输出 w_tmp 为时域复权向量，直接作用于回波/匹配滤波模板
+    s_tmp = w_tmp .* s_LFM;
     W_tmp_freq = fft(w_tmp);
     W_tmp_freq = W_tmp_freq / (max(abs(W_tmp_freq)) + eps);
-    s_tmp = ifft(fft(s_LFM) .* W_tmp_freq);
     [R_tmp, lag_tmp] = xcorr(s_tmp);
     R_tmp = safe_normalize(abs(R_tmp));
     [pslr_tmp, mw_tmp, papr_tmp] = compute_metrics_single(R_tmp, lag_tmp, s_tmp);
@@ -226,9 +229,10 @@ end
 params_alg2.tau = alg2_stats(best_idx).tau;
 [w_alg2, info_alg2] = design_window_alg2_wang2023(s_LFM, params_alg2);
 
+% Alg2 输出 w_alg2 为时域复权向量，直接施加到 LFM
+s_alg2 = w_alg2 .* s_LFM;
 W_alg2_freq = fft(w_alg2);
 W_alg2_freq = W_alg2_freq / (max(abs(W_alg2_freq)) + eps);
-s_alg2 = ifft(fft(s_LFM) .* W_alg2_freq);
 [R_alg2, lag_alg2] = xcorr(s_alg2);
 R_alg2 = safe_normalize(abs(R_alg2));
 [PSLR_alg2, MW_alg2, PAPR_alg2] = compute_metrics_single(R_alg2, lag_alg2, s_alg2);
@@ -240,7 +244,63 @@ fprintf('Legendre (W_opt)\t%.2f\t\t%.2e\t%.2f\n', PSLR_opt, MW_opt, PAPR_opt);
 fprintf('Wang Alg2\t\t%.2f\t\t%.2e\t%.2f\n', PSLR_alg2, MW_alg2, PAPR_alg2);
 fprintf('Hamming baseline\t%.2f\t\t%.2e\t%.2f\n', PSLR_hamming_ref, MW_hamming_ref, PAPR_hamming_ref);
 fprintf('Alg2 iterations = %d, final residual = %.3e\n', info_alg2.iters, info_alg2.history.residual(end));
+fprintf('Alg2 w-update solver = %s\n', info_alg2.solver_name);
 fprintf('=======================================================================\n');
+
+%% ========================================================================
+%  算法对比图：窗函数频谱图 / 自相关函数图 / 主瓣范围自相关图
+%% ========================================================================
+W_legendre_center = fftshift(W_opt);
+W_alg2_center = fftshift(W_alg2_freq);
+W_hamming_center = fftshift(W_hamming_ref);
+
+% 图1：窗函数频谱图（dB）
+figure(1);
+f_MHz = f / 1e6;
+plot(f_MHz, 20*log10(abs(W_legendre_center)+eps), 'g-', 'LineWidth', 1.6); hold on;
+plot(f_MHz, 20*log10(abs(W_alg2_center)+eps), 'b-.', 'LineWidth', 1.4);
+plot(f_MHz, 20*log10(abs(W_hamming_center)+eps), 'r--', 'LineWidth', 1.3);
+xlabel('Frequency (MHz)'); ylabel('Magnitude (dB)');
+legend('Legendre (W_{opt})', 'Wang Alg2', 'Hamming', 'Location', 'best');
+grid on;
+
+S_lfm = abs(fftshift(fft(s_LFM)));
+[~, idx_pk_spec] = max(S_lfm);
+th_spec = max(S_lfm) * 10^(-3/20);
+left_spec = find(S_lfm(1:idx_pk_spec) < th_spec, 1, 'last');
+if isempty(left_spec), left_spec = 1; end
+right_rel_spec = find(S_lfm(idx_pk_spec:end) < th_spec, 1, 'first');
+if isempty(right_rel_spec), right_spec = length(S_lfm); else, right_spec = idx_pk_spec + right_rel_spec - 1; end
+xlim([f(left_spec), f(right_spec)] / 1e6);
+ylim([-80, 5]);
+
+% 图2：自相关函数图（dB）
+[R_lfm, lag] = xcorr(s_LFM);
+R_lfm = safe_normalize(abs(R_lfm));
+
+figure(2);
+plot(lag/fs*1e6, 20*log10(R_lfm+eps), 'k-', 'LineWidth', 1.2); hold on;
+plot(lag_opt/fs*1e6, 20*log10(R_opt+eps), 'g-', 'LineWidth', 1.6);
+plot(lag_alg2/fs*1e6, 20*log10(R_alg2+eps), 'b-.', 'LineWidth', 1.4);
+plot(lag_hamming_ref/fs*1e6, 20*log10(R_hamming_ref+eps), 'r--', 'LineWidth', 1.3);
+xlabel('Time (us)'); ylabel('Normalized Magnitude (dB)');
+legend('Original LFM', 'Legendre (W_{opt})', 'Wang Alg2', 'Hamming', 'Location', 'best');
+grid on; xlim([-0.5 0.5]); ylim([-80 5]);
+
+% 图3：主瓣范围内自相关函数图（线性幅度）
+[~, idx_peak] = max(R_lfm);
+half_width = 60;
+range_idx = max(1, idx_peak-half_width) : min(length(R_lfm), idx_peak+half_width);
+t_corr = lag / fs * 1e6;
+
+figure(3);
+plot(t_corr(range_idx), R_lfm(range_idx), 'k-', 'LineWidth', 1.2); hold on;
+plot(t_corr(range_idx), R_opt(range_idx), 'g-', 'LineWidth', 1.6);
+plot(t_corr(range_idx), R_alg2(range_idx), 'b-.', 'LineWidth', 1.4);
+plot(t_corr(range_idx), R_hamming_ref(range_idx), 'r--', 'LineWidth', 1.3);
+xlabel('Delay (us)'); ylabel('Normalized Magnitude');
+legend('Original LFM', 'Legendre (W_{opt})', 'Wang Alg2', 'Hamming', 'Location', 'best');
+grid on;
 
 %% ========================================================================
 %  函数定义
@@ -433,6 +493,8 @@ function [w_alg2, info] = design_window_alg2_wang2023(s_LFM, params)
     if ~isfield(params,'psi'), params.psi = 1e-4; end
     if ~isfield(params,'tau'), params.tau = 1.9; end
     if ~isfield(params,'seed'), params.seed = 80; end
+    if ~isfield(params,'solver_preference'), params.solver_preference = 'proj-grad'; end
+    if ~isfield(params,'verbose_every'), params.verbose_every = 0; end
 
     rng(params.seed);
     x = s_LFM(:);
@@ -455,6 +517,9 @@ function [w_alg2, info] = design_window_alg2_wang2023(s_LFM, params)
 
     rho = params.rho;
     psi = params.psi;
+
+    % 性能优化：Rm 与其步长估计在整个 ADMM 迭代中不变，提前缓存避免每轮重复构造/谱分解
+    qcqp_cache = prepare_w_qcqp_cache_alg2(a0, am_mat, rho);
 
     w = ones(N,1);
     y = w' * a0;
@@ -485,11 +550,11 @@ function [w_alg2, info] = design_window_alg2_wang2023(s_LFM, params)
         y = y_vec(1);
         [z, v] = project_leq_complex(z_hat, v_hat);
 
-        % Step-2: (u_bar,v_bar) update via cubic-root selection (paper-style surrogate)
-        [u_bar, v_bar] = update_uvbar_cubic(u, v, theta, zeta, rho);
+        % Step-2: (u_bar,v_bar) update via fast cubic-candidate selection (with 1D fallback)
+        [u_bar, v_bar] = update_uvbar_fast(u, v, theta, zeta, rho);
 
         % Step-3: w update (QCQP with similarity constraint)
-        [w, ~] = update_w_qcqp(a0, am_mat, y, z, lambda, kappa, x, params.tau, rho, w);
+        [w, solver_name] = update_w_qcqp(a0, am_mat, y, z, lambda, kappa, x, params.tau, rho, w, params.solver_preference, qcqp_cache);
 
         % Dual updates
         ry = y - (w' * a0);
@@ -511,6 +576,10 @@ function [w_alg2, info] = design_window_alg2_wang2023(s_LFM, params)
         history.u(it) = real(u_bar);
         history.v(it) = real(v_bar);
 
+        if params.verbose_every > 0 && (it == 1 || mod(it, params.verbose_every) == 0)
+            fprintf('[Alg2] it=%4d residual=%.3e v/u=%.6f solver=%s\n', it, residual, history.obj(it), solver_name);
+        end
+
         if residual <= psi
             break;
         end
@@ -523,6 +592,7 @@ function [w_alg2, info] = design_window_alg2_wang2023(s_LFM, params)
 
     w_alg2 = w;
     info.iters = it;
+    info.solver_name = solver_name;
     info.Omega_m = Omega_m;
     info.history = history;
 end
@@ -639,14 +709,13 @@ function [z_proj, v_star] = project_leq_complex(z_hat_vec, v_hat)
     z_proj = min(r, v_star) .* exp(1j*angle(z_hat_vec));
 end
 
-function [u_bar, v_bar] = update_uvbar_cubic(u, v, theta, zeta, rho)
+function [u_bar, v_bar] = update_uvbar_fast(u, v, theta, zeta, rho)
     cu = real(u + theta/rho);
     cv = real(v + zeta/rho);
 
-    % paper-style cubic surrogate on v_bar
+    % 快速版本：优先使用三次方程实根候选（闭式思路），仅在异常时回退到1D搜索
     alpha = max(cu, eps);
-    eta = max(u, eps);
-    % rho*v^3 + (-rho*cv + 1/alpha)*v^2 - eta = 0
+    eta = max(real(u), eps);
     coeff = [rho, (-rho*cv + 1/alpha), 0, -eta];
     roots_v = roots(coeff);
     cand_v = real(roots_v(abs(imag(roots_v)) < 1e-8));
@@ -654,26 +723,55 @@ function [u_bar, v_bar] = update_uvbar_cubic(u, v, theta, zeta, rho)
     cand_v = unique([cand_v; max(cv,0); 0]);
 
     best_cost = inf;
-    v_bar = max(cv,0);
-    u_bar = max(cu,eps);
+    v_bar = max(cv, 0);
+    u_bar = max(cu, eps);
     for i = 1:numel(cand_v)
         v_try = cand_v(i);
         u_try = max(cu + (v_try - cv), eps);
         cost = v_try/max(u_try,eps) + (rho/2)*(u_try-cu)^2 + (rho/2)*(v_try-cv)^2;
-        if cost < best_cost
+        if isfinite(cost) && cost < best_cost
             best_cost = cost;
             v_bar = v_try;
             u_bar = u_try;
         end
     end
+
+    % 数值回退：仅在候选根不可用时才进行1D搜索（避免每轮 fminbnd）
+    if ~isfinite(best_cost)
+        delta = cu - cv;
+        lb = max(0, -delta + eps);
+        ub = max([lb + 1, cv + 5*max(1, abs(cv)), abs(v) + 5]);
+        obj_v = @(vb) vb./max(vb + delta, eps) + ...
+            (rho/2)*(max(vb + delta, eps)-cu).^2 + (rho/2)*(vb-cv).^2;
+        if exist('fminbnd','file') == 2
+            [v_bar, ~] = fminbnd(obj_v, lb, ub);
+        else
+            grid_v = linspace(lb, ub, 200);
+            [~, idx_best] = min(obj_v(grid_v));
+            v_bar = grid_v(idx_best);
+        end
+        v_bar = max(real(v_bar), 0);
+        u_bar = max(v_bar + delta, eps);
+    end
 end
 
-function [w_new, solver_name] = update_w_qcqp(a0, am_mat, y, z, lambda, kappa, x, tau, rho, w_init)
+function [w_new, solver_name] = update_w_qcqp(a0, am_mat, y, z, lambda, kappa, x, tau, rho, w_init, solver_preference, qcqp_cache)
     N = length(x);
-    Rm = rho * (a0*a0' + am_mat*am_mat') + 1e-8*eye(N);
-    rvec = -rho * (a0*(y + lambda/rho) + am_mat*(z + kappa/rho));
 
-    if exist('cvx_begin', 'file') == 2
+    if nargin < 11 || isempty(solver_preference)
+        solver_preference = 'proj-grad';
+    end
+    if nargin < 12 || isempty(qcqp_cache)
+        qcqp_cache = prepare_w_qcqp_cache_alg2(a0, am_mat, rho);
+    end
+
+    Rm = qcqp_cache.Rm;
+    L = qcqp_cache.L;
+    rvec = -rho * (a0*(y + lambda/rho) + am_mat*(z + kappa/rho));
+    use_cvx = strcmpi(solver_preference, 'cvx') || strcmpi(solver_preference, 'auto');
+    use_fmincon = strcmpi(solver_preference, 'fmincon') || strcmpi(solver_preference, 'auto');
+
+    if use_cvx && exist('cvx_begin', 'file') == 2
         solver_name = 'cvx';
         cvx_begin quiet
             variable w_cvx(N) complex
@@ -685,7 +783,7 @@ function [w_new, solver_name] = update_w_qcqp(a0, am_mat, y, z, lambda, kappa, x
         return;
     end
 
-    if exist('fmincon','file') == 2
+    if use_fmincon && exist('fmincon','file') == 2
         solver_name = 'fmincon';
         w0 = [real(w_init); imag(w_init)];
         obj = @(wr) wr_obj_qcqp(wr, Rm, rvec, N);
@@ -699,11 +797,13 @@ function [w_new, solver_name] = update_w_qcqp(a0, am_mat, y, z, lambda, kappa, x
 
     solver_name = 'proj-grad';
     w_new = w_init;
-    L = max(real(eig((Rm+Rm')/2)));
-    if ~isfinite(L) || L <= 0, L = 1; end
-    step = 1/L;
+    step = 1/max(L, eps);
     for it = 1:250
         g = 2*(Rm*w_new + rvec);
+        if norm(g,2) < 1e-6
+            break;
+        end
+        w_prev = w_new;
         w_new = w_new - step*g;
         d = x .* (w_new - 1);
         nd = norm(d,2);
@@ -711,7 +811,34 @@ function [w_new, solver_name] = update_w_qcqp(a0, am_mat, y, z, lambda, kappa, x
             d = d * (tau/nd);
             w_new = 1 + d ./ (x + (abs(x)<eps).*eps);
         end
+        if norm(w_new - w_prev,2) < 1e-8 * max(1,norm(w_prev,2))
+            break;
+        end
     end
+end
+
+
+function cache = prepare_w_qcqp_cache_alg2(a0, am_mat, rho)
+    N = length(a0);
+    Rm = rho * (a0*a0' + am_mat*am_mat') + 1e-8*eye(N);
+
+    % 用幂迭代估计 Lipschitz 常数，避免每次 w 更新都调用 eig(O(N^3))
+    v = ones(N,1) / sqrt(N);
+    for k = 1:20
+        v = Rm * v;
+        nv = norm(v,2);
+        if nv <= eps
+            break;
+        end
+        v = v / nv;
+    end
+    L = real(v' * Rm * v);
+    if ~isfinite(L) || L <= 0
+        L = 1;
+    end
+
+    cache.Rm = Rm;
+    cache.L = L;
 end
 
 function f = wr_obj_qcqp(wr, Rm, rvec, N)
