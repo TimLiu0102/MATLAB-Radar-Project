@@ -196,8 +196,6 @@ for i_tau = 1:numel(tau_list)
 
     % Alg2 输出 w_tmp 为时域复权向量，直接作用于回波/匹配滤波模板
     s_tmp = w_tmp .* s_LFM;
-    W_tmp_freq = fft(w_tmp);
-    W_tmp_freq = W_tmp_freq / (max(abs(W_tmp_freq)) + eps);
     [R_tmp, lag_tmp] = xcorr(s_tmp);
     R_tmp = safe_normalize(abs(R_tmp));
     [pslr_tmp, mw_tmp, papr_tmp] = compute_metrics_single(R_tmp, lag_tmp, s_tmp);
@@ -231,11 +229,23 @@ params_alg2.tau = alg2_stats(best_idx).tau;
 
 % Alg2 输出 w_alg2 为时域复权向量，直接施加到 LFM
 s_alg2 = w_alg2 .* s_LFM;
-W_alg2_freq = fft(w_alg2);
-W_alg2_freq = W_alg2_freq / (max(abs(W_alg2_freq)) + eps);
 [R_alg2, lag_alg2] = xcorr(s_alg2);
 R_alg2 = safe_normalize(abs(R_alg2));
 [PSLR_alg2, MW_alg2, PAPR_alg2] = compute_metrics_single(R_alg2, lag_alg2, s_alg2);
+
+% Alg2 为时域复权；图1需展示“等效窗形”时，使用 LFM 瞬时频率映射更稳定：
+% 将 |w_alg2(t)| 通过 f_inst(t)=k*t 映射到带内频率轴，避免 S_alg2/S_LFM 比值在谱零点处产生尖峰伪迹。
+f_inst = k * t;
+[f_inst_sorted, idx_sorted] = sort(f_inst);
+w_alg2_env_sorted = abs(w_alg2(idx_sorted));
+if exist('smoothdata','file') == 2
+    w_alg2_env_sorted = smoothdata(w_alg2_env_sorted, 'movmean', 7);
+end
+
+W_alg2_center = zeros(N,1);
+W_alg2_center(idx_band_ref) = interp1(f_inst_sorted, w_alg2_env_sorted, f(idx_band_ref), 'pchip', 'extrap');
+W_alg2_center = max(real(W_alg2_center), 0);
+W_alg2_center = W_alg2_center / (max(W_alg2_center) + eps);
 
 fprintf('\n=================== Legendre vs Wang-Alg2 vs Hamming ===================\n');
 fprintf('Selected tau for Alg2 = %.2f (%s)\n', params_alg2.tau, tau_note);
@@ -251,15 +261,18 @@ fprintf('=======================================================================
 %  算法对比图：窗函数频谱图 / 自相关函数图 / 主瓣范围自相关图
 %% ========================================================================
 W_legendre_center = fftshift(W_opt);
-W_alg2_center = fftshift(W_alg2_freq);
 W_hamming_center = fftshift(W_hamming_ref);
+idx_band_center = abs(f) < (B/2 - fs/N);
+f_MHz = f(idx_band_center) / 1e6;
+legendre_db = 20*log10(abs(W_legendre_center(idx_band_center)) + eps);
+alg2_db = 20*log10(abs(W_alg2_center(idx_band_center)) + eps);
+hamming_db = 20*log10(abs(W_hamming_center(idx_band_center)) + eps);
 
 % 图1：窗函数频谱图（dB）
 figure(1);
-f_MHz = f / 1e6;
-plot(f_MHz, 20*log10(abs(W_legendre_center)+eps), 'g-', 'LineWidth', 1.6); hold on;
-plot(f_MHz, 20*log10(abs(W_alg2_center)+eps), 'b-.', 'LineWidth', 1.4);
-plot(f_MHz, 20*log10(abs(W_hamming_center)+eps), 'r--', 'LineWidth', 1.3);
+plot(f_MHz, legendre_db, 'g-', 'LineWidth', 1.6); hold on;
+plot(f_MHz, alg2_db, 'b-.', 'LineWidth', 1.4);
+plot(f_MHz, hamming_db, 'r--', 'LineWidth', 1.3);
 xlabel('Frequency (MHz)'); ylabel('Magnitude (dB)');
 legend('Legendre (W_{opt})', 'Wang Alg2', 'Hamming', 'Location', 'best');
 grid on;
@@ -300,6 +313,28 @@ plot(t_corr(range_idx), R_alg2(range_idx), 'b-.', 'LineWidth', 1.4);
 plot(t_corr(range_idx), R_hamming_ref(range_idx), 'r--', 'LineWidth', 1.3);
 xlabel('Delay (us)'); ylabel('Normalized Magnitude');
 legend('Original LFM', 'Legendre (W_{opt})', 'Wang Alg2', 'Hamming', 'Location', 'best');
+grid on;
+
+
+% 图4：时域窗函数对比图（归一化幅度）
+w_legendre_t = s_w_opt ./ (s_LFM + eps);
+w_hamming_t = s_hamming_ref ./ (s_LFM + eps);
+w_alg2_t = w_alg2;
+
+w_legendre_t = abs(w_legendre_t);
+w_hamming_t = abs(w_hamming_t);
+w_alg2_t = abs(w_alg2_t);
+
+w_legendre_t = w_legendre_t / (max(w_legendre_t) + eps);
+w_hamming_t = w_hamming_t / (max(w_hamming_t) + eps);
+w_alg2_t = w_alg2_t / (max(w_alg2_t) + eps);
+
+figure(4);
+plot(t*1e6, w_legendre_t, 'g-', 'LineWidth', 1.6); hold on;
+plot(t*1e6, w_alg2_t, 'b-.', 'LineWidth', 1.4);
+plot(t*1e6, w_hamming_t, 'r--', 'LineWidth', 1.3);
+xlabel('Time (us)'); ylabel('Normalized Magnitude');
+legend('Legendre (W_{opt})', 'Wang Alg2', 'Hamming', 'Location', 'best');
 grid on;
 
 %% ========================================================================
