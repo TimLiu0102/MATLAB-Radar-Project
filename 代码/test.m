@@ -371,34 +371,45 @@ ylim([-80, 5]);
 
 
 %% ========================================================================
-%  图4：Kaiser 窗与 Proposed 窗综合对比（参考文献风格）
+%  图4：Proposed 与多窗函数综合对比（参考文献风格）
 % =========================================================================
 figure(4);
 tiledlayout(2,2,'Padding','compact','TileSpacing','compact');
 
-% (a) 窗函数频率响应
-nexttile;
 Nfft = 8192;
 W_opt_center = fftshift(W_opt);
+W_hamming_center = fftshift(W_hamming);
 W_kaiser_center = fftshift(W_kaiser);
-Hopt = abs(fft(W_opt_center, Nfft));
-Hkai = abs(fft(W_kaiser_center, Nfft));
+W_taylor_center = fftshift(W_taylor);
+W_cheb_center = fftshift(W_cheb);
+
+win_list = {W_hamming_center, W_kaiser_center, W_taylor_center, W_cheb_center, W_opt_center};
+labels = {'Hamming','Kaiser','Taylor','Chebyshev','Proposed'};
+styles = {'r--','b-.','m:','c--','g-'};
+widths = [1.0, 1.0, 1.2, 1.0, 1.5];
+
+% (a) 窗函数频率响应
+nexttile;
 f_norm = (0:Nfft-1)'/Nfft;
-plot(f_norm, 20*log10(Hkai/max(Hkai)+eps), 'b-', 'LineWidth', 1.0); hold on;
-plot(f_norm, 20*log10(Hopt/max(Hopt)+eps), 'r-', 'LineWidth', 1.0);
+for ii = 1:numel(win_list)
+    Hi = abs(fft(win_list{ii}, Nfft));
+    plot(f_norm, 20*log10(Hi/max(Hi)+eps), styles{ii}, 'LineWidth', widths(ii)); hold on;
+end
 xlabel('Normalized Frequency (\times\pi rad/sample)');
 ylabel('Magnitude (dB)');
-legend('Kai-win','proposed','Location','best');
+legend(labels, 'Location','best');
 grid on; xlim([0 1]); ylim([-160 5]);
 title('(a) Frequency response');
 
 % (b) 时域窗形
 nexttile;
 n = (0:N-1)';
-plot(n, abs(W_kaiser_center)/max(abs(W_kaiser_center)+eps), 'b-', 'LineWidth', 1.0); hold on;
-plot(n, abs(W_opt_center)/max(abs(W_opt_center)+eps), 'r-', 'LineWidth', 1.0);
+for ii = 1:numel(win_list)
+    wi = abs(win_list{ii});
+    plot(n, wi/(max(wi)+eps), styles{ii}, 'LineWidth', widths(ii)); hold on;
+end
 xlabel('Samples'); ylabel('Normalized Amplitude');
-legend('Kai-win','proposed','Location','best');
+legend(labels, 'Location','best');
 grid on; xlim([0 N-1]);
 title('(b) Time domain shape');
 
@@ -410,32 +421,31 @@ if mod(M_fir,2) ~= 0
     M_fir = M_fir + 1;
 end
 h_ideal = fir1(M_fir, wc, 'low', rectwin(M_fir+1));
-win_prop = abs(W_opt_center(1:M_fir+1));
-win_kai = abs(W_kaiser_center(1:M_fir+1));
-win_prop = win_prop / (max(win_prop)+eps);
-win_kai = win_kai / (max(win_kai)+eps);
-b_prop = h_ideal(:) .* win_prop(:);
-b_kai = h_ideal(:) .* win_kai(:);
-[Hp, wp] = freqz(b_prop, 1, Nfft);
-[Hk, wk] = freqz(b_kai, 1, Nfft);
-plot(wk/pi, 20*log10(abs(Hk)+eps), 'b-', 'LineWidth', 1.0); hold on;
-plot(wp/pi, 20*log10(abs(Hp)+eps), 'r-', 'LineWidth', 1.0);
+H_fir = cell(numel(win_list),1);
+w_fir = cell(numel(win_list),1);
+for ii = 1:numel(win_list)
+    wi = abs(win_list{ii}(1:M_fir+1));
+    wi = wi/(max(wi)+eps);
+    bi = h_ideal(:) .* wi(:);
+    [H_fir{ii}, w_fir{ii}] = freqz(bi, 1, Nfft);
+    plot(w_fir{ii}/pi, 20*log10(abs(H_fir{ii})+eps), styles{ii}, 'LineWidth', widths(ii)); hold on;
+end
 xlabel('Normalized Frequency (\times\pi rad/sample)');
 ylabel('Magnitude response (dB)');
-legend('Kai-win','proposed','Location','best');
+legend(labels, 'Location','best');
 grid on; xlim([0 1]); ylim([-150 5]);
 title('(c) FIR filter performance');
 
 % (d) FIR 幅度误差（相对理想低通）
 nexttile;
-Hd = double(wp <= wc*pi);
-err_k = abs(abs(Hk) - Hd);
-err_p = abs(abs(Hp) - Hd);
-semilogy(wk/pi, err_k + eps, 'b-', 'LineWidth', 1.0); hold on;
-semilogy(wp/pi, err_p + eps, 'r-', 'LineWidth', 1.0);
+Hd = double(w_fir{1} <= wc*pi);
+for ii = 1:numel(win_list)
+    err_i = abs(abs(H_fir{ii}) - Hd);
+    semilogy(w_fir{ii}/pi, err_i + eps, styles{ii}, 'LineWidth', widths(ii)); hold on;
+end
 xlabel('Normalized Frequency (\times\pi rad/sample)');
 ylabel('Amplitude error');
-legend('Kai-win','proposed','Location','best');
+legend(labels, 'Location','best');
 grid on; xlim([0 1]);
 title('(d) FIR filter error');
 
