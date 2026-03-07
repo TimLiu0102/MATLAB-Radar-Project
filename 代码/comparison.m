@@ -244,44 +244,32 @@ fprintf('=======================================================================
 
 
 %% ========================================================================
-%  图4：主瓣宽度 vs 旁瓣电平散点图（全部窗函数）
+%  图4：PAPR vs 旁瓣电平散点图（全部窗函数）
 % =========================================================================
 figure(4);
 ax1 = gca;
-scatter(metrics(:,2), metrics(:,1), 64, 'o', 'LineWidth', 1.6, ...
+scatter(metrics(:,3), metrics(:,1), 64, 'o', 'LineWidth', 1.6, ...
     'MarkerEdgeColor', [0 0.5 0.5], 'MarkerFaceColor', [0.90 0.97 0.97]);
 hold on; grid on;
 
 % 标注每个窗函数名称
-xspan = max(metrics(:,2)) - min(metrics(:,2)) + eps;
+xspan = max(metrics(:,3)) - min(metrics(:,3)) + eps;
 yspan = max(metrics(:,1)) - min(metrics(:,1)) + eps;
-dx = 0.015 * xspan;
-dy = 0.018 * yspan;
 for i = 1:numel(method_names)
     name_i = strrep(method_names{i}, '_', '-');
-    text(metrics(i,2) + dx, metrics(i,1) - dy, name_i, 'FontSize', 10);
+    text(metrics(i,3), metrics(i,1), name_i, 'FontSize', 10, ...
+        'HorizontalAlignment', 'left', 'VerticalAlignment', 'middle');
 end
 
-xlabel('Main lobe width (samples)');
+xlabel('PAPR');
 ylabel('Sidelobe attenuation (dB)');
-title('Window comparison: main-lobe width vs sidelobe level');
 
-xmin = min(metrics(:,2)) - 0.08*xspan;
-xmax = max(metrics(:,2)) + 0.20*xspan;
+xmin = min(metrics(:,3)) - 0.08*xspan;
+xmax = max(metrics(:,3)) + 0.20*xspan;
 ymin = min(metrics(:,1)) - 0.08*yspan;
 ymax = min(0, max(metrics(:,1)) + 0.12*yspan);
 xlim([xmin, xmax]);
 ylim([ymin, ymax]);
-
-% 辅助上轴：以“bins”展示主瓣宽度（相对 LFM）
-ax2 = axes('Position', ax1.Position, 'Color', 'none', ...
-    'XAxisLocation', 'top', 'YAxisLocation', 'right', ...
-    'XLim', ax1.XLim, 'YTick', [], 'HitTest', 'off');
-ratio_ticks = linspace(ax1.XLim(1), ax1.XLim(2), 6);
-ratio_vals = ratio_ticks / max(MW_lfm, eps);
-set(ax2, 'XTick', ratio_ticks, 'XTickLabel', arrayfun(@(v) sprintf('%.2f', v), ratio_vals, 'UniformOutput', false));
-xlabel(ax2, 'Main lobe width (x LFM bins)');
-
 
 % 文献窗与我方窗的对比对象（采用论文 PM3 版本）
 W_lit_n = W_N_PM3;
