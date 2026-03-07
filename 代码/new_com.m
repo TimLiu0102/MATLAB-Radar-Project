@@ -233,17 +233,14 @@ s_alg2 = w_alg2 .* s_LFM;
 R_alg2 = safe_normalize(abs(R_alg2));
 [PSLR_alg2, MW_alg2, PAPR_alg2] = compute_metrics_single(R_alg2, lag_alg2, s_alg2);
 
-% 将 Alg2 时域权重映射到“等效频域窗”用于与 W_opt/Hamming 统一展示。
-% 原因：直接 fft(w_alg2) 会变成“时域包络的谱”，与频域窗定义不一致，导致图形失真。
-f_inst = k * t;
-[f_inst_sorted, idx_sorted] = sort(f_inst);
-w_alg2_mag_sorted = abs(w_alg2(idx_sorted));
-w_alg2_band = interp1(f_inst_sorted, w_alg2_mag_sorted, f(idx_band_ref), 'linear', 'extrap');
-w_alg2_band = max(real(w_alg2_band), 0);
-
-W_alg2_center = zeros(N,1);
-W_alg2_center(idx_band_ref) = w_alg2_band;
-W_alg2_center = W_alg2_center / (max(abs(W_alg2_center)) + eps);
+% 用“等效频域窗”口径展示 Alg2：W_eq(f)=S_alg2(f)/S_LFM(f)
+% 这样与 W_opt/Hamming 的频域窗定义一致，避免把时域权重直接映射造成锯齿失真。
+S_alg2 = fft(s_alg2);
+S_lfm_base = fft(s_LFM);
+W_alg2_eq = zeros(N,1);
+W_alg2_eq(idx_band_ref) = S_alg2(idx_band_ref) ./ (S_lfm_base(idx_band_ref) + eps);
+W_alg2_center = fftshift(abs(W_alg2_eq));
+W_alg2_center = W_alg2_center / (max(W_alg2_center) + eps);
 
 fprintf('\n=================== Legendre vs Wang-Alg2 vs Hamming ===================\n');
 fprintf('Selected tau for Alg2 = %.2f (%s)\n', params_alg2.tau, tau_note);
@@ -260,13 +257,17 @@ fprintf('=======================================================================
 %% ========================================================================
 W_legendre_center = fftshift(W_opt);
 W_hamming_center = fftshift(W_hamming_ref);
+idx_band_center = abs(f) <= B/2;
+f_MHz = f(idx_band_center) / 1e6;
+legendre_db = 20*log10(abs(W_legendre_center(idx_band_center)) + eps);
+alg2_db = 20*log10(abs(W_alg2_center(idx_band_center)) + eps);
+hamming_db = 20*log10(abs(W_hamming_center(idx_band_center)) + eps);
 
 % 图1：窗函数频谱图（dB）
 figure(1);
-f_MHz = f / 1e6;
-plot(f_MHz, 20*log10(abs(W_legendre_center)+eps), 'g-', 'LineWidth', 1.6); hold on;
-plot(f_MHz, 20*log10(abs(W_alg2_center)+eps), 'b-.', 'LineWidth', 1.4);
-plot(f_MHz, 20*log10(abs(W_hamming_center)+eps), 'r--', 'LineWidth', 1.3);
+plot(f_MHz, legendre_db, 'g-', 'LineWidth', 1.6); hold on;
+plot(f_MHz, alg2_db, 'b-.', 'LineWidth', 1.4);
+plot(f_MHz, hamming_db, 'r--', 'LineWidth', 1.3);
 xlabel('Frequency (MHz)'); ylabel('Magnitude (dB)');
 legend('Legendre (W_{opt})', 'Wang Alg2', 'Hamming', 'Location', 'best');
 grid on;
