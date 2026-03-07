@@ -399,7 +399,6 @@ xlabel('Normalized Frequency (\times\pi rad/sample)');
 ylabel('Magnitude (dB)');
 legend(labels, 'Location','best');
 grid on; xlim([0 1]); ylim([-160 5]);
-title('(a) Frequency response');
 
 % (b) 时域窗形
 nexttile;
@@ -411,7 +410,6 @@ end
 xlabel('Samples'); ylabel('Normalized Amplitude');
 legend(labels, 'Location','best');
 grid on; xlim([0 N-1]);
-title('(b) Time domain shape');
 
 % (c) 低通 FIR 响应（窗法）
 nexttile;
@@ -434,7 +432,6 @@ xlabel('Normalized Frequency (\times\pi rad/sample)');
 ylabel('Magnitude response (dB)');
 legend(labels, 'Location','best');
 grid on; xlim([0 1]); ylim([-150 5]);
-title('(c) FIR filter performance');
 
 % (d) FIR 幅度误差（相对理想低通）
 nexttile;
@@ -447,7 +444,6 @@ xlabel('Normalized Frequency (\times\pi rad/sample)');
 ylabel('Amplitude error');
 legend(labels, 'Location','best');
 grid on; xlim([0 1]);
-title('(d) FIR filter error');
 
 %% ========================================================================
 %  扩展实验补充（按当前 test.m 参数体系）
