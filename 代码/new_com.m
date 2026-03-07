@@ -233,13 +233,18 @@ s_alg2 = w_alg2 .* s_LFM;
 R_alg2 = safe_normalize(abs(R_alg2));
 [PSLR_alg2, MW_alg2, PAPR_alg2] = compute_metrics_single(R_alg2, lag_alg2, s_alg2);
 
-% 用“等效频域窗”口径展示 Alg2：W_eq(f)=S_alg2(f)/S_LFM(f)
-% 这样与 W_opt/Hamming 的频域窗定义一致，避免把时域权重直接映射造成锯齿失真。
-S_alg2 = fft(s_alg2);
-S_lfm_base = fft(s_LFM);
-W_alg2_eq = zeros(N,1);
-W_alg2_eq(idx_band_ref) = S_alg2(idx_band_ref) ./ (S_lfm_base(idx_band_ref) + eps);
-W_alg2_center = fftshift(abs(W_alg2_eq));
+% Alg2 为时域复权；图1需展示“等效窗形”时，使用 LFM 瞬时频率映射更稳定：
+% 将 |w_alg2(t)| 通过 f_inst(t)=k*t 映射到带内频率轴，避免 S_alg2/S_LFM 比值在谱零点处产生尖峰伪迹。
+f_inst = k * t;
+[f_inst_sorted, idx_sorted] = sort(f_inst);
+w_alg2_env_sorted = abs(w_alg2(idx_sorted));
+if exist('smoothdata','file') == 2
+    w_alg2_env_sorted = smoothdata(w_alg2_env_sorted, 'movmean', 7);
+end
+
+W_alg2_center = zeros(N,1);
+W_alg2_center(idx_band_ref) = interp1(f_inst_sorted, w_alg2_env_sorted, f(idx_band_ref), 'pchip', 'extrap');
+W_alg2_center = max(real(W_alg2_center), 0);
 W_alg2_center = W_alg2_center / (max(W_alg2_center) + eps);
 
 fprintf('\n=================== Legendre vs Wang-Alg2 vs Hamming ===================\n');
@@ -257,7 +262,7 @@ fprintf('=======================================================================
 %% ========================================================================
 W_legendre_center = fftshift(W_opt);
 W_hamming_center = fftshift(W_hamming_ref);
-idx_band_center = abs(f) <= B/2;
+idx_band_center = abs(f) < (B/2 - fs/N);
 f_MHz = f(idx_band_center) / 1e6;
 legendre_db = 20*log10(abs(W_legendre_center(idx_band_center)) + eps);
 alg2_db = 20*log10(abs(W_alg2_center(idx_band_center)) + eps);
