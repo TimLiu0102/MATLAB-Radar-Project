@@ -369,6 +369,76 @@ end
 xlim([f(left_spec), f(right_spec)] / 1e6);
 ylim([-80, 5]);
 
+
+%% ========================================================================
+%  图4：Kaiser 窗与 Proposed 窗综合对比（参考文献风格）
+% =========================================================================
+figure(4);
+tiledlayout(2,2,'Padding','compact','TileSpacing','compact');
+
+% (a) 窗函数频率响应
+nexttile;
+Nfft = 8192;
+W_opt_center = fftshift(W_opt);
+W_kaiser_center = fftshift(W_kaiser);
+Hopt = abs(fft(W_opt_center, Nfft));
+Hkai = abs(fft(W_kaiser_center, Nfft));
+f_norm = (0:Nfft-1)'/Nfft;
+plot(f_norm, 20*log10(Hkai/max(Hkai)+eps), 'b-', 'LineWidth', 1.0); hold on;
+plot(f_norm, 20*log10(Hopt/max(Hopt)+eps), 'r-', 'LineWidth', 1.0);
+xlabel('Normalized Frequency (\times\pi rad/sample)');
+ylabel('Magnitude (dB)');
+legend('Kai-win','proposed','Location','best');
+grid on; xlim([0 1]); ylim([-160 5]);
+title('(a) Frequency response');
+
+% (b) 时域窗形
+nexttile;
+n = (0:N-1)';
+plot(n, abs(W_kaiser_center)/max(abs(W_kaiser_center)+eps), 'b-', 'LineWidth', 1.0); hold on;
+plot(n, abs(W_opt_center)/max(abs(W_opt_center)+eps), 'r-', 'LineWidth', 1.0);
+xlabel('Samples'); ylabel('Normalized Amplitude');
+legend('Kai-win','proposed','Location','best');
+grid on; xlim([0 N-1]);
+title('(b) Time domain shape');
+
+% (c) 低通 FIR 响应（窗法）
+nexttile;
+M_fir = max(32, 2*floor(N/4));
+wc = 0.25;  % 归一化截止频率（相对 Nyquist）
+if mod(M_fir,2) ~= 0
+    M_fir = M_fir + 1;
+end
+h_ideal = fir1(M_fir, wc, 'low', rectwin(M_fir+1));
+win_prop = abs(W_opt_center(1:M_fir+1));
+win_kai = abs(W_kaiser_center(1:M_fir+1));
+win_prop = win_prop / (max(win_prop)+eps);
+win_kai = win_kai / (max(win_kai)+eps);
+b_prop = h_ideal(:) .* win_prop(:);
+b_kai = h_ideal(:) .* win_kai(:);
+[Hp, wp] = freqz(b_prop, 1, Nfft);
+[Hk, wk] = freqz(b_kai, 1, Nfft);
+plot(wk/pi, 20*log10(abs(Hk)+eps), 'b-', 'LineWidth', 1.0); hold on;
+plot(wp/pi, 20*log10(abs(Hp)+eps), 'r-', 'LineWidth', 1.0);
+xlabel('Normalized Frequency (\times\pi rad/sample)');
+ylabel('Magnitude response (dB)');
+legend('Kai-win','proposed','Location','best');
+grid on; xlim([0 1]); ylim([-150 5]);
+title('(c) FIR filter performance');
+
+% (d) FIR 幅度误差（相对理想低通）
+nexttile;
+Hd = double(wp <= wc*pi);
+err_k = abs(abs(Hk) - Hd);
+err_p = abs(abs(Hp) - Hd);
+semilogy(wk/pi, err_k + eps, 'b-', 'LineWidth', 1.0); hold on;
+semilogy(wp/pi, err_p + eps, 'r-', 'LineWidth', 1.0);
+xlabel('Normalized Frequency (\times\pi rad/sample)');
+ylabel('Amplitude error');
+legend('Kai-win','proposed','Location','best');
+grid on; xlim([0 1]);
+title('(d) FIR filter error');
+
 %% ========================================================================
 %  扩展实验补充（按当前 test.m 参数体系）
 % =========================================================================
