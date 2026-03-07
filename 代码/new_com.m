@@ -239,6 +239,20 @@ R_alg2 = safe_normalize(abs(R_alg2));
 alg2_elapsed = toc(alg2_timer);
 alg2_iter_proxy = sum(arrayfun(@(x) x.info.iters, alg2_stats)) + info_alg2.iters;
 
+% Alg2 为时域复权；图1需展示“等效窗形”时，使用 LFM 瞬时频率映射更稳定：
+% 将 |w_alg2(t)| 通过 f_inst(t)=k*t 映射到带内频率轴，避免 S_alg2/S_LFM 比值在谱零点处产生尖峰伪迹。
+f_inst = k * t;
+[f_inst_sorted, idx_sorted] = sort(f_inst);
+w_alg2_env_sorted = abs(w_alg2(idx_sorted));
+if exist('smoothdata','file') == 2
+    w_alg2_env_sorted = smoothdata(w_alg2_env_sorted, 'movmean', 7);
+end
+
+W_alg2_center = zeros(N,1);
+W_alg2_center(idx_band_ref) = interp1(f_inst_sorted, w_alg2_env_sorted, f(idx_band_ref), 'pchip', 'extrap');
+W_alg2_center = max(real(W_alg2_center), 0);
+W_alg2_center = W_alg2_center / (max(W_alg2_center) + eps);
+
 fprintf('\n=================== Legendre vs Wang-Alg2 vs Hamming ===================\n');
 fprintf('Selected tau for Alg2 = %.2f (%s)\n', params_alg2.tau, tau_note);
 fprintf('Method\t\t\tPSLR(dB)\tMW\t\tPAPR\n');
