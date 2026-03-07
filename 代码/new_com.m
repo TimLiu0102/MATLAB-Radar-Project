@@ -315,6 +315,28 @@ xlabel('Delay (us)'); ylabel('Normalized Magnitude');
 legend('Original LFM', 'Legendre (W_{opt})', 'Wang Alg2', 'Hamming', 'Location', 'best');
 grid on;
 
+
+% 图4：时域窗函数对比图（归一化幅度）
+w_legendre_t = s_w_opt ./ (s_LFM + eps);
+w_hamming_t = s_hamming_ref ./ (s_LFM + eps);
+w_alg2_t = w_alg2;
+
+w_legendre_t = abs(w_legendre_t);
+w_hamming_t = abs(w_hamming_t);
+w_alg2_t = abs(w_alg2_t);
+
+w_legendre_t = w_legendre_t / (max(w_legendre_t) + eps);
+w_hamming_t = w_hamming_t / (max(w_hamming_t) + eps);
+w_alg2_t = w_alg2_t / (max(w_alg2_t) + eps);
+
+figure(4);
+plot(t*1e6, w_legendre_t, 'g-', 'LineWidth', 1.6); hold on;
+plot(t*1e6, w_alg2_t, 'b-.', 'LineWidth', 1.4);
+plot(t*1e6, w_hamming_t, 'r--', 'LineWidth', 1.3);
+xlabel('Time (us)'); ylabel('Normalized Magnitude');
+legend('Legendre (W_{opt})', 'Wang Alg2', 'Hamming', 'Location', 'best');
+grid on;
+
 %% ========================================================================
 %  函数定义
 %% ========================================================================
