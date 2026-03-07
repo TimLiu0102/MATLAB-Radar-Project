@@ -196,8 +196,6 @@ for i_tau = 1:numel(tau_list)
 
     % Alg2 输出 w_tmp 为时域复权向量，直接作用于回波/匹配滤波模板
     s_tmp = w_tmp .* s_LFM;
-    W_tmp_freq = fft(w_tmp);
-    W_tmp_freq = W_tmp_freq / (max(abs(W_tmp_freq)) + eps);
     [R_tmp, lag_tmp] = xcorr(s_tmp);
     R_tmp = safe_normalize(abs(R_tmp));
     [pslr_tmp, mw_tmp, papr_tmp] = compute_metrics_single(R_tmp, lag_tmp, s_tmp);
@@ -231,11 +229,21 @@ params_alg2.tau = alg2_stats(best_idx).tau;
 
 % Alg2 输出 w_alg2 为时域复权向量，直接施加到 LFM
 s_alg2 = w_alg2 .* s_LFM;
-W_alg2_freq = fft(w_alg2);
-W_alg2_freq = W_alg2_freq / (max(abs(W_alg2_freq)) + eps);
 [R_alg2, lag_alg2] = xcorr(s_alg2);
 R_alg2 = safe_normalize(abs(R_alg2));
 [PSLR_alg2, MW_alg2, PAPR_alg2] = compute_metrics_single(R_alg2, lag_alg2, s_alg2);
+
+% 将 Alg2 时域权重映射到“等效频域窗”用于与 W_opt/Hamming 统一展示。
+% 原因：直接 fft(w_alg2) 会变成“时域包络的谱”，与频域窗定义不一致，导致图形失真。
+f_inst = k * t;
+[f_inst_sorted, idx_sorted] = sort(f_inst);
+w_alg2_mag_sorted = abs(w_alg2(idx_sorted));
+w_alg2_band = interp1(f_inst_sorted, w_alg2_mag_sorted, f(idx_band_ref), 'linear', 'extrap');
+w_alg2_band = max(real(w_alg2_band), 0);
+
+W_alg2_center = zeros(N,1);
+W_alg2_center(idx_band_ref) = w_alg2_band;
+W_alg2_center = W_alg2_center / (max(abs(W_alg2_center)) + eps);
 
 fprintf('\n=================== Legendre vs Wang-Alg2 vs Hamming ===================\n');
 fprintf('Selected tau for Alg2 = %.2f (%s)\n', params_alg2.tau, tau_note);
@@ -251,7 +259,6 @@ fprintf('=======================================================================
 %  算法对比图：窗函数频谱图 / 自相关函数图 / 主瓣范围自相关图
 %% ========================================================================
 W_legendre_center = fftshift(W_opt);
-W_alg2_center = fftshift(W_alg2_freq);
 W_hamming_center = fftshift(W_hamming_ref);
 
 % 图1：窗函数频谱图（dB）
