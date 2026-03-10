@@ -374,7 +374,8 @@ ylim([-80, 5]);
 %  图4：Proposed 与多窗函数综合对比（参考文献风格）
 % =========================================================================
 figure(4);
-tiledlayout(2,2,'Padding','compact','TileSpacing','compact');
+set(gcf, 'Position', [120, 120, 2200, 360]);
+tiledlayout(1,4,'Padding','compact','TileSpacing','compact');
 
 Nfft = 8192;
 W_opt_center = fftshift(W_opt);
@@ -398,7 +399,8 @@ end
 xlabel('Normalized Frequency (\times\pi rad/sample)');
 ylabel('Magnitude (dB)');
 legend(labels, 'Location','best');
-grid on; xlim([0 1]); ylim([-160 5]);
+grid on; xlim([0 0.2]); ylim([-160 5]);
+text(0.5, -0.26, '(a)', 'Units', 'normalized', 'FontWeight', 'bold', 'HorizontalAlignment', 'center', 'VerticalAlignment', 'top');
 
 % (b) 时域窗形
 nexttile;
@@ -410,6 +412,7 @@ end
 xlabel('Samples'); ylabel('Normalized Amplitude');
 legend(labels, 'Location','best');
 grid on; xlim([0 N-1]);
+text(0.5, -0.26, '(b)', 'Units', 'normalized', 'FontWeight', 'bold', 'HorizontalAlignment', 'center', 'VerticalAlignment', 'top');
 
 % (c) 低通 FIR 响应（窗法）
 nexttile;
@@ -432,6 +435,7 @@ xlabel('Normalized Frequency (\times\pi rad/sample)');
 ylabel('Magnitude response (dB)');
 legend(labels, 'Location','best');
 grid on; xlim([0 1]); ylim([-150 5]);
+text(0.5, -0.26, '(c)', 'Units', 'normalized', 'FontWeight', 'bold', 'HorizontalAlignment', 'center', 'VerticalAlignment', 'top');
 
 % (d) FIR 幅度误差（相对理想低通）
 nexttile;
@@ -444,6 +448,7 @@ xlabel('Normalized Frequency (\times\pi rad/sample)');
 ylabel('Amplitude error');
 legend(labels, 'Location','best');
 grid on; xlim([0 1]);
+text(0.5, -0.26, '(d)', 'Units', 'normalized', 'FontWeight', 'bold', 'HorizontalAlignment', 'center', 'VerticalAlignment', 'top');
 
 %% ========================================================================
 %  扩展实验补充（按当前 test.m 参数体系）
@@ -696,15 +701,13 @@ function run_extended_experiments(cfg)
 
     % 参数敏感性（图表述，全部为实际值，不是差值）
     sweeps = {
-        'alpha', [0.05 0.1 0.2 0.35];
-        'gamma', [0.5 1.0 1.8];
         'lambda_PSLR', [40 80 120];
         'lambda_MW', [4 7 10];
         'lambda_PAPR', [5 8 11]
     };
 
     figure('Name','Sensitivity Analysis');
-    tl = tiledlayout(2,3, 'Padding','compact','TileSpacing','compact');
+    tl = tiledlayout(1,3, 'Padding','compact','TileSpacing','compact');
 
     for i = 1:size(sweeps,1)
         field_name = sweeps{i,1};
@@ -718,7 +721,7 @@ function run_extended_experiments(cfg)
         yyaxis right;
         plot(vals, mw_vals, 'b-s', 'LineWidth', 1.2); hold on;
         plot(vals, papr_vals, 'r-^', 'LineWidth', 1.2);
-        ylabel('$\mathrm{MW},\;\mathrm{PAPR}$', 'Interpreter', 'latex');
+        ylabel('$\mathrm{MW}\,(\mathrm{s}),\;\mathrm{PAPR}\,(-)$', 'Interpreter', 'latex');
         xlabel(x_label_latex, 'Interpreter', 'latex');
         legend({'$\mathrm{PSLR}$','$\mathrm{MW}$','$\mathrm{PAPR}$'}, 'Interpreter', 'latex', 'Location', 'best');
         grid on;
