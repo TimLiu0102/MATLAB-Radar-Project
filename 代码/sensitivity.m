@@ -620,16 +620,14 @@ function run_extended_experiments(cfg)
 
     % 参数敏感性（图表述，全部为实际值，不是差值）
     sweeps = {
-        'alpha', [0.05 0.1 0.2 0.35];
-        'gamma', [0.5 1.0 1.8];
-        'lambda_PSLR', [40 80 120];
-        'lambda_MW', [4 7 10];
-        'lambda_PAPR', [5 8 11];
+        'gamma', [0.5 1.0 1.8 2.6];
+        'beta0', [0.6 1.0 1.4 1.8];
+        'nFireflies', [10 14 18 22];
         'PSLR_margin', [0.4 0.8 1.2 1.6]
     };
 
     figure('Name','Sensitivity Analysis');
-    tl = tiledlayout(2,3, 'Padding','compact','TileSpacing','compact');
+    tl = tiledlayout(2,2, 'Padding','compact','TileSpacing','compact');
 
     for i = 1:size(sweeps,1)
         field_name = sweeps{i,1};
@@ -643,7 +641,7 @@ function run_extended_experiments(cfg)
         yyaxis right;
         plot(vals, mw_vals, 'b-s', 'LineWidth', 1.2); hold on;
         plot(vals, papr_vals, 'r-^', 'LineWidth', 1.2);
-        ylabel('$\mathrm{MW},\;\mathrm{PAPR}$', 'Interpreter', 'latex');
+        ylabel('$\mathrm{MW}\,(\mathrm{samples}),\;\mathrm{PAPR}$', 'Interpreter', 'latex');
         xlabel(x_label_latex, 'Interpreter', 'latex');
         legend({'$\mathrm{PSLR}$','$\mathrm{MW}$','$\mathrm{PAPR}$'}, 'Interpreter', 'latex', 'Location', 'best');
         grid on;
@@ -761,6 +759,10 @@ function x_label_latex = field_to_latex_ext(field_name)
             x_label_latex = '$\alpha$';
         case 'gamma'
             x_label_latex = '$\gamma$';
+        case 'beta0'
+            x_label_latex = '$\beta_0$';
+        case 'nFireflies'
+            x_label_latex = '$N_{\mathrm{fireflies}}$';
         case 'lambda_PSLR'
             x_label_latex = '$\lambda_{\mathrm{PSLR}}$';
         case 'lambda_MW'
