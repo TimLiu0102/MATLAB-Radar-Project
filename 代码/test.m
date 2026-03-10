@@ -390,7 +390,7 @@ styles = {'r--','b-.','m:','c--','g-'};
 widths = [1.0, 1.0, 1.2, 1.0, 1.5];
 
 % (a) 窗函数频率响应
-nexttile;
+ax = nexttile;
 f_norm = (0:Nfft-1)'/Nfft;
 for ii = 1:numel(win_list)
     Hi = abs(fft(win_list{ii}, Nfft));
@@ -403,7 +403,7 @@ grid on; xlim([0 0.2]); ylim([-160 5]);
 text(0.5, -0.26, '(a)', 'Units', 'normalized', 'FontWeight', 'bold', 'HorizontalAlignment', 'center', 'VerticalAlignment', 'top');
 
 % (b) 时域窗形
-nexttile;
+ax = nexttile;
 n = (0:N-1)';
 for ii = 1:numel(win_list)
     wi = abs(win_list{ii});
@@ -415,7 +415,7 @@ grid on; xlim([0 N-1]);
 text(0.5, -0.26, '(b)', 'Units', 'normalized', 'FontWeight', 'bold', 'HorizontalAlignment', 'center', 'VerticalAlignment', 'top');
 
 % (c) 低通 FIR 响应（窗法）
-nexttile;
+ax = nexttile;
 M_fir = max(32, 2*floor(N/4));
 wc = 0.25;  % 归一化截止频率（相对 Nyquist）
 if mod(M_fir,2) ~= 0
@@ -438,7 +438,7 @@ grid on; xlim([0 1]); ylim([-150 5]);
 text(0.5, -0.26, '(c)', 'Units', 'normalized', 'FontWeight', 'bold', 'HorizontalAlignment', 'center', 'VerticalAlignment', 'top');
 
 % (d) FIR 幅度误差（相对理想低通）
-nexttile;
+ax = nexttile;
 Hd = double(w_fir{1} <= wc*pi);
 for ii = 1:numel(win_list)
     err_i = abs(abs(H_fir{ii}) - Hd);
@@ -708,7 +708,7 @@ function run_extended_experiments(cfg)
     };
 
     figure('Name','Sensitivity Analysis');
-    tl = tiledlayout(1,4, 'Padding','compact','TileSpacing','compact');
+    tl = tiledlayout(2,2, 'Padding','compact','TileSpacing','compact');
 
     for i = 1:size(sweeps,1)
         field_name = sweeps{i,1};
