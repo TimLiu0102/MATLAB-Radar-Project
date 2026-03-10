@@ -374,7 +374,8 @@ ylim([-80, 5]);
 %  图4：Proposed 与多窗函数综合对比（参考文献风格）
 % =========================================================================
 figure(4);
-tiledlayout(2,2,'Padding','compact','TileSpacing','compact');
+set(gcf, 'Position', [120, 80, 760, 980]);
+tiledlayout(4,1,'Padding','compact','TileSpacing','compact');
 
 Nfft = 8192;
 W_opt_center = fftshift(W_opt);
@@ -389,7 +390,7 @@ styles = {'r--','b-.','m:','c--','g-'};
 widths = [1.0, 1.0, 1.2, 1.0, 1.5];
 
 % (a) 窗函数频率响应
-nexttile;
+ax = nexttile;
 f_norm = (0:Nfft-1)'/Nfft;
 for ii = 1:numel(win_list)
     Hi = abs(fft(win_list{ii}, Nfft));
@@ -398,10 +399,12 @@ end
 xlabel('Normalized Frequency (\times\pi rad/sample)');
 ylabel('Magnitude (dB)');
 legend(labels, 'Location','best');
-grid on; xlim([0 1]); ylim([-160 5]);
+grid on; xlim([0 0.2]); ylim([-160 5]);
+text(0.02, 0.92, '(a)', 'Units', 'normalized', 'FontWeight', 'bold', 'HorizontalAlignment', 'left', 'VerticalAlignment', 'top');
+set(ax, 'PlotBoxAspectRatio', [2.2 1 1]);
 
 % (b) 时域窗形
-nexttile;
+ax = nexttile;
 n = (0:N-1)';
 for ii = 1:numel(win_list)
     wi = abs(win_list{ii});
@@ -410,9 +413,11 @@ end
 xlabel('Samples'); ylabel('Normalized Amplitude');
 legend(labels, 'Location','best');
 grid on; xlim([0 N-1]);
+text(0.02, 0.92, '(b)', 'Units', 'normalized', 'FontWeight', 'bold', 'HorizontalAlignment', 'left', 'VerticalAlignment', 'top');
+set(ax, 'PlotBoxAspectRatio', [2.2 1 1]);
 
 % (c) 低通 FIR 响应（窗法）
-nexttile;
+ax = nexttile;
 M_fir = max(32, 2*floor(N/4));
 wc = 0.25;  % 归一化截止频率（相对 Nyquist）
 if mod(M_fir,2) ~= 0
@@ -432,9 +437,11 @@ xlabel('Normalized Frequency (\times\pi rad/sample)');
 ylabel('Magnitude response (dB)');
 legend(labels, 'Location','best');
 grid on; xlim([0 1]); ylim([-150 5]);
+text(0.02, 0.92, '(c)', 'Units', 'normalized', 'FontWeight', 'bold', 'HorizontalAlignment', 'left', 'VerticalAlignment', 'top');
+set(ax, 'PlotBoxAspectRatio', [2.2 1 1]);
 
 % (d) FIR 幅度误差（相对理想低通）
-nexttile;
+ax = nexttile;
 Hd = double(w_fir{1} <= wc*pi);
 for ii = 1:numel(win_list)
     err_i = abs(abs(H_fir{ii}) - Hd);
@@ -444,6 +451,8 @@ xlabel('Normalized Frequency (\times\pi rad/sample)');
 ylabel('Amplitude error');
 legend(labels, 'Location','best');
 grid on; xlim([0 1]);
+text(0.02, 0.92, '(d)', 'Units', 'normalized', 'FontWeight', 'bold', 'HorizontalAlignment', 'left', 'VerticalAlignment', 'top');
+set(ax, 'PlotBoxAspectRatio', [2.2 1 1]);
 
 %% ========================================================================
 %  扩展实验补充（按当前 test.m 参数体系）
