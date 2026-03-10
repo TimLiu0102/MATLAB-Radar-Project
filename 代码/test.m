@@ -398,7 +398,7 @@ end
 xlabel('Normalized Frequency (\times\pi rad/sample)');
 ylabel('Magnitude (dB)');
 legend(labels, 'Location','best');
-grid on; xlim([0 1]); ylim([-160 5]);
+grid on; xlim([0 0.2]); ylim([-160 5]);
 text(0.5, -0.22, '(a)', 'Units', 'normalized', 'HorizontalAlignment', 'center', 'VerticalAlignment', 'top');
 
 % (b) 时域窗形
