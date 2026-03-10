@@ -369,6 +369,82 @@ end
 xlim([f(left_spec), f(right_spec)] / 1e6);
 ylim([-80, 5]);
 
+
+%% ========================================================================
+%  图4：Proposed 与多窗函数综合对比（参考文献风格）
+% =========================================================================
+figure(4);
+tiledlayout(2,2,'Padding','compact','TileSpacing','compact');
+
+Nfft = 8192;
+W_opt_center = fftshift(W_opt);
+W_hamming_center = fftshift(W_hamming);
+W_kaiser_center = fftshift(W_kaiser);
+W_taylor_center = fftshift(W_taylor);
+W_cheb_center = fftshift(W_cheb);
+
+win_list = {W_hamming_center, W_kaiser_center, W_taylor_center, W_cheb_center, W_opt_center};
+labels = {'Hamming','Kaiser','Taylor','Chebyshev','Proposed'};
+styles = {'r--','b-.','m:','c--','g-'};
+widths = [1.0, 1.0, 1.2, 1.0, 1.5];
+
+% (a) 窗函数频率响应
+nexttile;
+f_norm = (0:Nfft-1)'/Nfft;
+for ii = 1:numel(win_list)
+    Hi = abs(fft(win_list{ii}, Nfft));
+    plot(f_norm, 20*log10(Hi/max(Hi)+eps), styles{ii}, 'LineWidth', widths(ii)); hold on;
+end
+xlabel('Normalized Frequency (\times\pi rad/sample)');
+ylabel('Magnitude (dB)');
+legend(labels, 'Location','best');
+grid on; xlim([0 1]); ylim([-160 5]);
+
+% (b) 时域窗形
+nexttile;
+n = (0:N-1)';
+for ii = 1:numel(win_list)
+    wi = abs(win_list{ii});
+    plot(n, wi/(max(wi)+eps), styles{ii}, 'LineWidth', widths(ii)); hold on;
+end
+xlabel('Samples'); ylabel('Normalized Amplitude');
+legend(labels, 'Location','best');
+grid on; xlim([0 N-1]);
+
+% (c) 低通 FIR 响应（窗法）
+nexttile;
+M_fir = max(32, 2*floor(N/4));
+wc = 0.25;  % 归一化截止频率（相对 Nyquist）
+if mod(M_fir,2) ~= 0
+    M_fir = M_fir + 1;
+end
+h_ideal = fir1(M_fir, wc, 'low', rectwin(M_fir+1));
+H_fir = cell(numel(win_list),1);
+w_fir = cell(numel(win_list),1);
+for ii = 1:numel(win_list)
+    wi = abs(win_list{ii}(1:M_fir+1));
+    wi = wi/(max(wi)+eps);
+    bi = h_ideal(:) .* wi(:);
+    [H_fir{ii}, w_fir{ii}] = freqz(bi, 1, Nfft);
+    plot(w_fir{ii}/pi, 20*log10(abs(H_fir{ii})+eps), styles{ii}, 'LineWidth', widths(ii)); hold on;
+end
+xlabel('Normalized Frequency (\times\pi rad/sample)');
+ylabel('Magnitude response (dB)');
+legend(labels, 'Location','best');
+grid on; xlim([0 1]); ylim([-150 5]);
+
+% (d) FIR 幅度误差（相对理想低通）
+nexttile;
+Hd = double(w_fir{1} <= wc*pi);
+for ii = 1:numel(win_list)
+    err_i = abs(abs(H_fir{ii}) - Hd);
+    semilogy(w_fir{ii}/pi, err_i + eps, styles{ii}, 'LineWidth', widths(ii)); hold on;
+end
+xlabel('Normalized Frequency (\times\pi rad/sample)');
+ylabel('Amplitude error');
+legend(labels, 'Location','best');
+grid on; xlim([0 1]);
+
 %% ========================================================================
 %  扩展实验补充（按当前 test.m 参数体系）
 % =========================================================================
@@ -624,8 +700,7 @@ function run_extended_experiments(cfg)
         'gamma', [0.5 1.0 1.8];
         'lambda_PSLR', [40 80 120];
         'lambda_MW', [4 7 10];
-        'lambda_PAPR', [5 8 11];
-        'PSLR_margin', [0.4 0.8 1.2 1.6]
+        'lambda_PAPR', [5 8 11]
     };
 
     figure('Name','Sensitivity Analysis');

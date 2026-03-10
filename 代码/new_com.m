@@ -51,6 +51,7 @@ lb = -5 * ones(1, dim);
 ub = 5 * ones(1, dim);
 
 nRestarts = 4;
+legendre_timer = tic;
 global_best_fitness = inf;
 global_best_b = zeros(1, dim);
 
@@ -162,6 +163,8 @@ s_w_opt = ifft(fft(s_LFM) .* W_opt);
 [R_opt, lag_opt] = xcorr(s_w_opt);
 R_opt = safe_normalize(abs(R_opt));
 [PSLR_opt, MW_opt, PAPR_opt] = compute_metrics_single(R_opt, lag_opt, s_w_opt);
+legendre_elapsed = toc(legendre_timer);
+legendre_iter_proxy = nRestarts * maxIter;
 
 fprintf('\n=================== Optimized Legendre Window Result ===================\n');
 fprintf('PSLR = %.2f dB\n', PSLR_opt);
@@ -176,7 +179,7 @@ fprintf('=======================================================================
 %% ========================================================================
 params_alg2 = struct();
 params_alg2.rho = 0.01;
-params_alg2.Tmax = 4500;
+params_alg2.Tmax = 800;
 params_alg2.psi = 1e-4;
 params_alg2.tau = 1.9;
 params_alg2.seed = 80;
@@ -184,9 +187,10 @@ params_alg2.solver_preference = 'proj-grad';
 params_alg2.verbose_every = 0;
 
 % tau 自动扫（粗扫）
-tau_list = [1.2, 1.5, 1.9, 2.3, 2.8];
-coarse_tmax = 1500;
+tau_list = [1.5, 1.9, 2.3];
+coarse_tmax = 300;
 
+alg2_timer = tic;
 alg2_stats = struct('tau', cell(numel(tau_list),1), 'pslr', [], 'mw', [], 'papr', [], 'w', []);
 for i_tau = 1:numel(tau_list)
     params_tmp = params_alg2;
@@ -236,6 +240,22 @@ W_alg2_freq = W_alg2_freq / (max(abs(W_alg2_freq)) + eps);
 [R_alg2, lag_alg2] = xcorr(s_alg2);
 R_alg2 = safe_normalize(abs(R_alg2));
 [PSLR_alg2, MW_alg2, PAPR_alg2] = compute_metrics_single(R_alg2, lag_alg2, s_alg2);
+alg2_elapsed = toc(alg2_timer);
+alg2_iter_proxy = sum(arrayfun(@(x) x.info.iters, alg2_stats)) + info_alg2.iters;
+
+% Alg2 为时域复权；图1需展示“等效窗形”时，使用 LFM 瞬时频率映射更稳定：
+% 将 |w_alg2(t)| 通过 f_inst(t)=k*t 映射到带内频率轴，避免 S_alg2/S_LFM 比值在谱零点处产生尖峰伪迹。
+f_inst = k * t;
+[f_inst_sorted, idx_sorted] = sort(f_inst);
+w_alg2_env_sorted = abs(w_alg2(idx_sorted));
+if exist('smoothdata','file') == 2
+    w_alg2_env_sorted = smoothdata(w_alg2_env_sorted, 'movmean', 7);
+end
+
+W_alg2_center = zeros(N,1);
+W_alg2_center(idx_band_ref) = interp1(f_inst_sorted, w_alg2_env_sorted, f(idx_band_ref), 'pchip', 'extrap');
+W_alg2_center = max(real(W_alg2_center), 0);
+W_alg2_center = W_alg2_center / (max(W_alg2_center) + eps);
 
 fprintf('\n=================== Legendre vs Wang-Alg2 vs Hamming ===================\n');
 fprintf('Selected tau for Alg2 = %.2f (%s)\n', params_alg2.tau, tau_note);
@@ -840,6 +860,7 @@ function cache = prepare_w_qcqp_cache_alg2(a0, am_mat, rho)
     cache.Rm = Rm;
     cache.L = L;
 end
+
 
 function f = wr_obj_qcqp(wr, Rm, rvec, N)
     w = wr(1:N) + 1j*wr(N+1:end);
