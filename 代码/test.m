@@ -703,11 +703,12 @@ function run_extended_experiments(cfg)
     sweeps = {
         'lambda_PSLR', [40 80 120];
         'lambda_MW', [4 7 10];
-        'lambda_PAPR', [5 8 11]
+        'lambda_PAPR', [5 8 11];
+        'PSLR_margin', [0.8 1.2 1.6]
     };
 
     figure('Name','Sensitivity Analysis');
-    tl = tiledlayout(1,3, 'Padding','compact','TileSpacing','compact');
+    tl = tiledlayout(2,2, 'Padding','compact','TileSpacing','compact');
 
     for i = 1:size(sweeps,1)
         field_name = sweeps{i,1};
