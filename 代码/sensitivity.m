@@ -620,9 +620,9 @@ function run_extended_experiments(cfg)
 
     % 参数敏感性（图表述，全部为实际值，不是差值）
     sweeps = {
-        'gamma', [0.5 1.0 1.8 2.6];
-        'beta0', [0.6 1.0 1.4 1.8];
-        'nFireflies', [10 14 18 22];
+        'lambda_PSLR', [40 80 120 160];
+        'lambda_MW', [4 7 10 13];
+        'lambda_PAPR', [5 8 11 14];
         'PSLR_margin', [0.4 0.8 1.2 1.6]
     };
 
