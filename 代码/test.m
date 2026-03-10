@@ -704,7 +704,7 @@ function run_extended_experiments(cfg)
         'lambda_PSLR', [40 80 120];
         'lambda_MW', [4 7 10];
         'lambda_PAPR', [5 8 11];
-        'PSLR_margin', [0.8 1.2 1.6]
+        'PSLR_margin', [0.4 0.8 1.2 1.6]
     };
 
     figure('Name','Sensitivity Analysis');
@@ -874,7 +874,48 @@ function [pslr, mw, papr] = eval_metrics_by_b_ext(b, s_LFM, fs, B)
     s_w = ifft(fft(s_LFM) .* W);
     [R, lag] = xcorr(s_w);
     R = safe_normalize(abs(R));
-    [pslr, mw, papr] = compute_metrics_single(R, lag, s_w);
+    [pslr, ~, papr] = compute_metrics_single(R, lag, s_w);
+    % 灵敏度分析中的 MW 与历史版本保持一致：采用首零点主瓣宽度（采样点）
+    mw = compute_mw_first_null_ext(R, lag);
+end
+
+function mw = compute_mw_first_null_ext(R, lag)
+    R = R(:);
+    lag = lag(:);
+    [~, idx_peak] = max(R);
+
+    left_null = idx_peak;
+    for i = idx_peak:-1:2
+        if R(i-1) > R(i) && R(i) < R(i+1)
+            left_null = i;
+            break;
+        end
+    end
+
+    right_null = idx_peak;
+    for i = idx_peak:length(R)-1
+        if R(i) > R(i+1) && R(i+1) < R(i+2)
+            right_null = i + 1;
+            break;
+        end
+    end
+
+    th_20dB = 10^(-20/20);
+    if left_null == idx_peak
+        left_20 = find(R(1:idx_peak) < th_20dB, 1, 'last');
+        if ~isempty(left_20)
+            left_null = left_20;
+        end
+    end
+    if right_null == idx_peak
+        right_20_rel = find(R(idx_peak:end) < th_20dB, 1, 'first');
+        if ~isempty(right_20_rel)
+            right_null = idx_peak + right_20_rel - 1;
+        end
+    end
+
+    mw = lag(right_null) - lag(left_null);
+    mw = mw(1);
 end
 
 function [s, f] = build_lfm_ext(B, T, fs)
