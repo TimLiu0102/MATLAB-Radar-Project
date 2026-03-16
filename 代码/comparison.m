@@ -345,6 +345,74 @@ xlim([f(left_spec), f(right_spec)] / 1e6);
 ylim([-80, 5]);
 
 %% ========================================================================
+%  算法对比图（参照 test.m：窗函数频谱 / 自相关 / 主瓣范围）
+%% ========================================================================
+% 选择 Yamaoka 系列中 PSLR 最优的方法用于可视化对比
+[~, rel_best_y] = min(metrics(2:end,1));
+idx_best_y = rel_best_y + 1;
+W_best_y = windows{idx_best_y};
+name_best_y = method_names{idx_best_y};
+
+s_best_y = ifft(fft(s_LFM) .* W_best_y);
+[R_best_y, lag_best_y] = xcorr(s_best_y);
+R_best_y = safe_normalize(abs(R_best_y));
+
+[R_lfm_plot, lag_plot] = xcorr(s_LFM);
+R_lfm_plot = safe_normalize(abs(R_lfm_plot));
+
+% 图1：自相关函数对比图（dB）
+figure(1);
+plot(lag_plot/fs*1e6, 20*log10(R_lfm_plot+eps), 'k-', 'LineWidth', 1.2); hold on;
+plot(lag_opt/fs*1e6, 20*log10(R_opt+eps), 'g-', 'LineWidth', 1.6);
+plot(lag_hamming_ref/fs*1e6, 20*log10(R_hamming_ref+eps), 'r--', 'LineWidth', 1.2);
+plot(lag_best_y/fs*1e6, 20*log10(R_best_y+eps), 'b-.', 'LineWidth', 1.3);
+xlabel('Time (us)'); ylabel('Normalized Magnitude (dB)');
+legend('Original LFM','Legendre opt','Hamming',name_best_y,'Location','best');
+grid on; xlim([-0.5 0.5]); ylim([-80 5]);
+
+% 图2：主瓣范围内自相关函数图（线性幅度）
+[~, idx_peak] = max(R_lfm_plot);
+half_width = 60;
+range_idx = max(1, idx_peak-half_width) : min(length(R_lfm_plot), idx_peak+half_width);
+t_corr = lag_plot / fs * 1e6;
+
+figure(2);
+plot(t_corr(range_idx), R_lfm_plot(range_idx), 'k-', 'LineWidth', 1.2); hold on;
+plot(t_corr(range_idx), R_opt(range_idx), 'g-', 'LineWidth', 1.6);
+plot(t_corr(range_idx), R_hamming_ref(range_idx), 'r--', 'LineWidth', 1.2);
+plot(t_corr(range_idx), R_best_y(range_idx), 'b-.', 'LineWidth', 1.3);
+xlabel('Delay (us)'); ylabel('Normalized Magnitude');
+legend('Original LFM','Legendre opt','Hamming',name_best_y,'Location','best');
+grid on;
+
+% 图3：窗函数频谱图（dB）
+figure(3);
+f_MHz = f / 1e6;
+plot(f_MHz, 20*log10(abs(fftshift(W_opt))+eps), 'g-', 'LineWidth', 1.6); hold on;
+plot(f_MHz, 20*log10(abs(fftshift(W_hamming_ref))+eps), 'r--', 'LineWidth', 1.2);
+plot(f_MHz, 20*log10(abs(fftshift(W_best_y))+eps), 'b-.', 'LineWidth', 1.3);
+xlabel('Frequency (MHz)'); ylabel('Magnitude (dB)');
+legend('Legendre opt','Hamming',name_best_y,'Location','best');
+grid on;
+
+% 与 test.m 对齐：显示原始 LFM 频谱主瓣（-3 dB）范围
+S_lfm = abs(fftshift(fft(s_LFM)));
+[~, idx_pk_spec] = max(S_lfm);
+th_spec = max(S_lfm) * 10^(-3/20);
+left_spec = find(S_lfm(1:idx_pk_spec) < th_spec, 1, 'last');
+if isempty(left_spec)
+    left_spec = 1;
+end
+right_rel_spec = find(S_lfm(idx_pk_spec:end) < th_spec, 1, 'first');
+if isempty(right_rel_spec)
+    right_spec = length(S_lfm);
+else
+    right_spec = idx_pk_spec + right_rel_spec - 1;
+end
+xlim([f(left_spec), f(right_spec)] / 1e6);
+ylim([-80, 5]);
+
+%% ========================================================================
 %  函数定义
 %% ========================================================================
 

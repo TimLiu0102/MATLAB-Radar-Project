@@ -200,6 +200,8 @@ for i_tau = 1:numel(tau_list)
 
     % Alg2 输出 w_tmp 为时域复权向量，直接作用于回波/匹配滤波模板
     s_tmp = w_tmp .* s_LFM;
+    W_tmp_freq = fft(w_tmp);
+    W_tmp_freq = W_tmp_freq / (max(abs(W_tmp_freq)) + eps);
     [R_tmp, lag_tmp] = xcorr(s_tmp);
     R_tmp = safe_normalize(abs(R_tmp));
     [pslr_tmp, mw_tmp, papr_tmp] = compute_metrics_single(R_tmp, lag_tmp, s_tmp);
@@ -233,6 +235,8 @@ params_alg2.tau = alg2_stats(best_idx).tau;
 
 % Alg2 输出 w_alg2 为时域复权向量，直接施加到 LFM
 s_alg2 = w_alg2 .* s_LFM;
+W_alg2_freq = fft(w_alg2);
+W_alg2_freq = W_alg2_freq / (max(abs(W_alg2_freq)) + eps);
 [R_alg2, lag_alg2] = xcorr(s_alg2);
 R_alg2 = safe_normalize(abs(R_alg2));
 [PSLR_alg2, MW_alg2, PAPR_alg2] = compute_metrics_single(R_alg2, lag_alg2, s_alg2);
@@ -264,14 +268,37 @@ fprintf('Alg2 w-update solver = %s\n', info_alg2.solver_name);
 fprintf('=======================================================================\n');
 
 %% ========================================================================
-%  算法对比图：自相关函数图 / 主瓣范围自相关图 / 复杂度与运行时间
+%  算法对比图：窗函数频谱图 / 自相关函数图 / 主瓣范围自相关图
 %% ========================================================================
+W_legendre_center = fftshift(W_opt);
+W_alg2_center = fftshift(W_alg2_freq);
+W_hamming_center = fftshift(W_hamming_ref);
 
-% 图1：自相关函数图（dB）
+% 图1：窗函数频谱图（dB）
+figure(1);
+f_MHz = f / 1e6;
+plot(f_MHz, 20*log10(abs(W_legendre_center)+eps), 'g-', 'LineWidth', 1.6); hold on;
+plot(f_MHz, 20*log10(abs(W_alg2_center)+eps), 'b-.', 'LineWidth', 1.4);
+plot(f_MHz, 20*log10(abs(W_hamming_center)+eps), 'r--', 'LineWidth', 1.3);
+xlabel('Frequency (MHz)'); ylabel('Magnitude (dB)');
+legend('Legendre (W_{opt})', 'Wang Alg2', 'Hamming', 'Location', 'best');
+grid on;
+
+S_lfm = abs(fftshift(fft(s_LFM)));
+[~, idx_pk_spec] = max(S_lfm);
+th_spec = max(S_lfm) * 10^(-3/20);
+left_spec = find(S_lfm(1:idx_pk_spec) < th_spec, 1, 'last');
+if isempty(left_spec), left_spec = 1; end
+right_rel_spec = find(S_lfm(idx_pk_spec:end) < th_spec, 1, 'first');
+if isempty(right_rel_spec), right_spec = length(S_lfm); else, right_spec = idx_pk_spec + right_rel_spec - 1; end
+xlim([f(left_spec), f(right_spec)] / 1e6);
+ylim([-80, 5]);
+
+% 图2：自相关函数图（dB）
 [R_lfm, lag] = xcorr(s_LFM);
 R_lfm = safe_normalize(abs(R_lfm));
 
-figure(1);
+figure(2);
 plot(lag/fs*1e6, 20*log10(R_lfm+eps), 'k-', 'LineWidth', 1.2); hold on;
 plot(lag_opt/fs*1e6, 20*log10(R_opt+eps), 'g-', 'LineWidth', 1.6);
 plot(lag_alg2/fs*1e6, 20*log10(R_alg2+eps), 'b-.', 'LineWidth', 1.4);
@@ -280,13 +307,13 @@ xlabel('Time (us)'); ylabel('Normalized Magnitude (dB)');
 legend('Original LFM', 'Legendre (W_{opt})', 'Wang Alg2', 'Hamming', 'Location', 'best');
 grid on; xlim([-0.5 0.5]); ylim([-80 5]);
 
-% 图2：主瓣范围内自相关函数图（线性幅度）
+% 图3：主瓣范围内自相关函数图（线性幅度）
 [~, idx_peak] = max(R_lfm);
 half_width = 60;
 range_idx = max(1, idx_peak-half_width) : min(length(R_lfm), idx_peak+half_width);
 t_corr = lag / fs * 1e6;
 
-figure(2);
+figure(3);
 plot(t_corr(range_idx), R_lfm(range_idx), 'k-', 'LineWidth', 1.2); hold on;
 plot(t_corr(range_idx), R_opt(range_idx), 'g-', 'LineWidth', 1.6);
 plot(t_corr(range_idx), R_alg2(range_idx), 'b-.', 'LineWidth', 1.4);
@@ -294,29 +321,6 @@ plot(t_corr(range_idx), R_hamming_ref(range_idx), 'r--', 'LineWidth', 1.3);
 xlabel('Delay (us)'); ylabel('Normalized Magnitude');
 legend('Original LFM', 'Legendre (W_{opt})', 'Wang Alg2', 'Hamming', 'Location', 'best');
 grid on;
-
-% 图3：复杂度/运行时间对比（Legendre vs Wang Alg2）
-methods = categorical({'Legendre', 'Wang Alg2'});
-runtime_vals = [legendre_elapsed, alg2_elapsed];
-iter_vals = [legendre_iter_proxy, alg2_iter_proxy];
-
-figure(3);
-yyaxis left;
-b1 = bar(methods, runtime_vals, 0.55, 'FaceColor', [0.35 0.75 0.95]);
-ylabel('Runtime (s)');
-
-yyaxis right;
-plot(methods, iter_vals, 'ro--', 'LineWidth', 1.5, 'MarkerFaceColor', 'r');
-ylabel('Iteration proxy count');
-grid on;
-legend([b1], {'Runtime'}, 'Location', 'northwest');
-
-fprintf('\n=================== Complexity / Runtime Comparison ===================\n');
-fprintf('Legendre: runtime = %.3f s, iteration proxy = %d\n', legendre_elapsed, legendre_iter_proxy);
-fprintf('Wang Alg2: runtime = %.3f s, iteration proxy = %d\n', alg2_elapsed, alg2_iter_proxy);
-fprintf('=====================================================================\n');
-
-
 
 %% ========================================================================
 %  函数定义
@@ -536,8 +540,6 @@ function [w_alg2, info] = design_window_alg2_wang2023(s_LFM, params)
 
     % 性能优化：Rm 与其步长估计在整个 ADMM 迭代中不变，提前缓存避免每轮重复构造/谱分解
     qcqp_cache = prepare_w_qcqp_cache_alg2(a0, am_mat, rho);
-    qcqp_cache = prepare_w_qcqp_cache_alg2(a0, am_mat, rho);
-
 
     w = ones(N,1);
     y = w' * a0;
@@ -781,8 +783,6 @@ function [w_new, solver_name] = update_w_qcqp(a0, am_mat, y, z, lambda, kappa, x
     end
     if nargin < 12 || isempty(qcqp_cache)
         qcqp_cache = prepare_w_qcqp_cache_alg2(a0, am_mat, rho);
-        qcqp_cache = prepare_w_qcqp_cache_alg2(a0, am_mat, rho);
-
     end
 
     Rm = qcqp_cache.Rm;
@@ -839,31 +839,6 @@ end
 
 
 function cache = prepare_w_qcqp_cache_alg2(a0, am_mat, rho)
-    N = length(a0);
-    Rm = rho * (a0*a0' + am_mat*am_mat') + 1e-8*eye(N);
-
-    % 用幂迭代估计 Lipschitz 常数，避免每次 w 更新都调用 eig(O(N^3))
-    v = ones(N,1) / sqrt(N);
-    for k = 1:20
-        v = Rm * v;
-        nv = norm(v,2);
-        if nv <= eps
-            break;
-        end
-        v = v / nv;
-    end
-    L = real(v' * Rm * v);
-    if ~isfinite(L) || L <= 0
-        L = 1;
-    end
-
-    cache.Rm = Rm;
-    cache.L = L;
-end
-
-
-
-function cache = prepare_w_qcqp_cache(a0, am_mat, rho)
     N = length(a0);
     Rm = rho * (a0*a0' + am_mat*am_mat') + 1e-8*eye(N);
 
